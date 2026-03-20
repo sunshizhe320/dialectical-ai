@@ -359,9 +359,22 @@ MODE_OPTIONS = {
     }
 }
 
-# ========== 流式显示 AI 响应函数 ==========
 def stream_ai_response(ai_reply, placeholder_container):
     """流式显示 AI 回复"""
+    
+    # 检查 ai_reply 是否为空
+    if not ai_reply:
+        placeholder_container.markdown("""
+        <div class="ai-bubble">
+            <div class="bubble-header">
+                <span class="speaker-name">🤖 AI Assistant</span>
+                <span class="timestamp">❌ 错误</span>
+            </div>
+            <div class="message-content">AI 服务暂时无法响应，请稍后重试</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
     displayed_text = ""
     
     for char in ai_reply:
@@ -386,7 +399,6 @@ def stream_ai_response(ai_reply, placeholder_container):
         <div class="message-content">{displayed_text}</div>
     </div>
     """, unsafe_allow_html=True)
-
 # ========== 登录页面 ==========
 if not st.session_state.session_started:
     st.markdown("""
@@ -416,7 +428,7 @@ if not st.session_state.session_started:
     
     **示例：**
     - 小组名称：`小组1`
-    - 讨论主题：`世界上有思慧的问题嘛`
+    - 讨论主题：`世界上有愚蠢的问题嘛`
     
     只要两个人填的完全一样，就会自动同步到一个界面！
     """)
