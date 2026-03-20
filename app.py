@@ -765,6 +765,78 @@ else:
         
         if clear_btn:
             st.rerun()
+
+        # ========== 分析面板 ==========
+        st.divider()
+        
+        st.markdown("### 📊 批判性思维分析")
+        
+        if history:
+            # 安全的分析方法
+            try:
+                stats = {
+                    "questions": 0,
+                    "counterarguments": 0,
+                    "evidence": 0,
+                    "clarifications": 0,
+                    "agreements": 0,
+                    "user_messages": 0,
+                    "ai_messages": 0
+                }
+                
+                # 遍历历史记录进行统计
+                for h in history:
+                    msg = str(h.get("message", "")).lower()
+                    role = h.get("role", "")
+                    
+                    # 统计用户消息
+                    if role != "assistant":
+                        stats["user_messages"] += 1
+                    else:
+                        stats["ai_messages"] += 1
+                    
+                    # 检查特定关键词
+                    if any(w in msg for w in ["为什么", "如何", "怎样", "？", "?"]):
+                        stats["questions"] += 1
+                    
+                    if any(w in msg for w in ["但是", "相反", "不同意", "反对"]):
+                        stats["counterarguments"] += 1
+                    
+                    if any(w in msg for w in ["例如", "比如", "数据", "证据", "研究"]):
+                        stats["evidence"] += 1
+                    
+                    if any(w in msg for w in ["也就是", "换句话说", "简单来说", "即"]):
+                        stats["clarifications"] += 1
+                    
+                    if any(w in msg for w in ["同意", "确实", "赞成", "好点子", "同感"]):
+                        stats["agreements"] += 1
+                
+                # 遍历历史记录进行统计
+                for h in history:
+                    msg = str(h.get("message", "")).lower()
+                    role = h.get("role", "")
+                    
+                    # 统计用户消息
+                    if role != "assistant":
+                        stats["user_messages"] += 1
+                    else:
+                        stats["ai_messages"] += 1
+                    
+                    # 检查特定关键词
+                    if any(w in msg for w in ["为什么", "如何", "怎样", "？", "?"]):
+                        stats["questions"] += 1
+                    
+                    if any(w in msg for w in ["但是", "相反", "不同意", "反对"]):
+                        stats["counterarguments"] += 1
+                    
+                    if any(w in msg for w in ["例如", "比如", "数据", "证据", "研究"]):
+                        stats["evidence"] += 1
+                    
+                    if any(w in msg for w in ["也就是", "换句话说", "简单来说", "即"]):
+                        stats["clarifications"] += 1
+                    
+                    if any(w in msg for w in ["同意", "确实", "赞成", "好点子", "同感"]):
+                        stats["agreements"] += 1
                 
                 # ===== 讨论质量指标 =====
                 st.markdown("#### 🎯 讨论质量指标")
