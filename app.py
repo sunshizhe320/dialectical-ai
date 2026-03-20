@@ -1,9 +1,10 @@
-# app.py - 完整优化版本（使用内存存储，避免数据库问题）
 import streamlit as st
 import time
 import io
 import csv
+import json
 from datetime import datetime, timedelta
+from pathlib import Path
 from dotenv import load_dotenv
 
 from ai_agent import generate_response
@@ -17,29 +18,62 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ========== 内存存储系统 ==========
-# 使用 Streamlit session_state 替代数据库
+# ========== 使用文件系统作为共享存储（跨设备同步） ==========
 
-def init_storage():
-    """初始化存储"""
-    if "all_sessions" not in st.session_state:
-        st.session_state.all_sessions = {}  # {session_id: {team_name, topic, mode, created_at, messages: []}}
-    if "all_participants" not in st.session_state:
-        st.session_state.all_participants = {}  # {session_id: {user_name: last_active}}
+SESSIONS_FILE = "sessions_data.json"
+PARTICIPANTS_FILE = "participants_data.json"
 
-init_storage()
+def load_all_sessions():
+    """从文件加载所有会话"""
+    if Path(SESSIONS_FILE).exists():
+        try:
+            with open(SESSIONS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_all_sessions(data):
+    """保存所有会话到文件"""
+    try:
+        with open(SESSIONS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"❌ 保存会话失败: {e}")
+
+def load_all_participants():
+    """从文件加载所有参与者"""
+    if Path(PARTICIPANTS_FILE).exists():
+        try:
+            with open(PARTICIPANTS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_all_participants(data):
+    """保存所有参与者到文件"""
+    try:
+        with open(PARTICIPANTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"❌ 保存参与者失败: {e}")
 
 def get_or_create_session(team_name, topic, mode, created_by):
-    """获取或创建会话"""
+    """获取或创建会话 - 真正的跨设备同步"""
+    all_sessions = load_all_sessions()
+    
     # 检查是否已存在相同的小组+主题
-    for sid, info in st.session_state.all_sessions.items():
-        if info["team_name"] == team_name and info["topic"] == topic:
+    for sid, info in all_sessions.items():
+        if info.get("team_name") == team_name and info.get("topic") == topic:
+            print(f"✅ 找到现有会话: {sid}")
             return sid
     
     # 创建新会话
-    session_id = f"{team_name}_{topic.replace('？', '').replace('?', '')[:20]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    topic_short = topic.replace('？', '').replace('?', '')[:20]
+    session_id = f"{team_name}_{topic_short}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
-    st.session_state.all_sessions[session_id] = {
+    all_sessions[session_id] = {
         "team_name": team_name,
         "topic": topic,
         "mode": mode,
@@ -48,26 +82,31 @@ def get_or_create_session(team_name, topic, mode, created_by):
         "messages": []
     }
     
-    st.session_state.all_participants[session_id] = {}
-    
+    save_all_sessions(all_sessions)
+    print(f"✅ 创建新会话: {session_id}")
     return session_id
 
 def add_participant(session_id, user_name):
     """添加参与者"""
-    if session_id not in st.session_state.all_participants:
-        st.session_state.all_participants[session_id] = {}
+    all_participants = load_all_participants()
     
-    st.session_state.all_participants[session_id][user_name] = datetime.now().isoformat()
+    if session_id not in all_participants:
+        all_participants[session_id] = {}
+    
+    all_participants[session_id][user_name] = datetime.now().isoformat()
+    save_all_participants(all_participants)
 
 def get_session_participants(session_id):
     """获取活跃参与者"""
-    if session_id not in st.session_state.all_participants:
+    all_participants = load_all_participants()
+    
+    if session_id not in all_participants:
         return []
     
     cutoff = datetime.now() - timedelta(minutes=5)
     active = []
     
-    for user, last_active in st.session_state.all_participants[session_id].items():
+    for user, last_active in all_participants[session_id].items():
         try:
             if datetime.fromisoformat(last_active) > cutoff:
                 active.append(user)
@@ -77,40 +116,50 @@ def get_session_participants(session_id):
     return active
 
 def save_message(session_id, user, role, message):
-    """保存消息"""
-    if session_id not in st.session_state.all_sessions:
+    """保存消息 - 同步到文件"""
+    all_sessions = load_all_sessions()
+    
+    if session_id not in all_sessions:
+        print(f"❌ 会话不存在: {session_id}")
         return
     
-    st.session_state.all_sessions[session_id]["messages"].append({
+    all_sessions[session_id]["messages"].append({
         "user": user,
         "role": role,
         "message": message,
         "timestamp": datetime.now().isoformat()
     })
+    
+    save_all_sessions(all_sessions)
+    print(f"✅ 消息已保存")
 
 def get_history(session_id, limit=100):
     """获取对话历史"""
-    if session_id not in st.session_state.all_sessions:
+    all_sessions = load_all_sessions()
+    
+    if session_id not in all_sessions:
         return []
     
-    messages = st.session_state.all_sessions[session_id]["messages"]
+    messages = all_sessions[session_id].get("messages", [])
     return messages[-limit:] if len(messages) > limit else messages
 
 def get_session_info(session_id):
     """获取会话信息"""
-    if session_id not in st.session_state.all_sessions:
+    all_sessions = load_all_sessions()
+    
+    if session_id not in all_sessions:
         return None
     
-    info = st.session_state.all_sessions[session_id]
+    info = all_sessions[session_id]
     return {
-        "team_name": info["team_name"],
-        "topic": info["topic"],
-        "mode": info["mode"],
-        "created_at": info["created_at"],
-        "created_by": info["created_by"]
+        "team_name": info.get("team_name"),
+        "topic": info.get("topic"),
+        "mode": info.get("mode"),
+        "created_at": info.get("created_at"),
+        "created_by": info.get("created_by")
     }
 
-# ========== CSS 优化 ==========
+# ========== CSS 和其他代码保持不变 ==========
 st.markdown("""
 <style>
     @keyframes blink {
@@ -282,6 +331,15 @@ if "session_started" not in st.session_state:
 if "session_start_time" not in st.session_state:
     st.session_state.session_start_time = None
 
+# 每隔一段时间刷新，以同步其他设备的消息
+if st.session_state.session_started:
+    if "last_refresh" not in st.session_state:
+        st.session_state.last_refresh = datetime.now()
+    
+    if (datetime.now() - st.session_state.last_refresh).seconds > 2:
+        st.session_state.last_refresh = datetime.now()
+        st.rerun()
+
 # ========== AI 模式配置 ==========
 MODE_OPTIONS = {
     "AI-Scaffolded": {
@@ -355,6 +413,12 @@ if not st.session_state.session_started:
     
     ### 💡 加入小组说明
     **重要：** 与其他成员填写**相同的「小组名称」和「讨论主题」**即可进入同一讨论界面！
+    
+    **示例：**
+    - 小组名称：`小组1`
+    - 讨论主题：`世界上有思慧的问题嘛`
+    
+    只要两个人填的完全一样，就会自动同步到一个界面！
     """)
     
     st.divider()
