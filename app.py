@@ -1,30 +1,114 @@
-# app.py - 完整优化版本（多成员同步讨论+自动会话管理）
+# app.py - 完整优化版本（使用内存存储，避免数据库问题）
 import streamlit as st
 import time
 import io
 import csv
-import pandas as pd
-import json
 from datetime import datetime, timedelta
-from pathlib import Path
 from dotenv import load_dotenv
 
 from ai_agent import generate_response
-from db import (
-    init_db, save_message, get_history, 
-    get_or_create_session, add_participant, 
-    get_session_participants, get_session_info
-)
 from discourse_analysis import analyzer
 
 load_dotenv()
-init_db()
 
 st.set_page_config(
     page_title="Dialectical AI Partner",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ========== 内存存储系统 ==========
+# 使用 Streamlit session_state 替代数据库
+
+def init_storage():
+    """初始化存储"""
+    if "all_sessions" not in st.session_state:
+        st.session_state.all_sessions = {}  # {session_id: {team_name, topic, mode, created_at, messages: []}}
+    if "all_participants" not in st.session_state:
+        st.session_state.all_participants = {}  # {session_id: {user_name: last_active}}
+
+init_storage()
+
+def get_or_create_session(team_name, topic, mode, created_by):
+    """获取或创建会话"""
+    # 检查是否已存在相同的小组+主题
+    for sid, info in st.session_state.all_sessions.items():
+        if info["team_name"] == team_name and info["topic"] == topic:
+            return sid
+    
+    # 创建新会话
+    session_id = f"{team_name}_{topic.replace('？', '').replace('?', '')[:20]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    st.session_state.all_sessions[session_id] = {
+        "team_name": team_name,
+        "topic": topic,
+        "mode": mode,
+        "created_at": datetime.now().isoformat(),
+        "created_by": created_by,
+        "messages": []
+    }
+    
+    st.session_state.all_participants[session_id] = {}
+    
+    return session_id
+
+def add_participant(session_id, user_name):
+    """添加参与者"""
+    if session_id not in st.session_state.all_participants:
+        st.session_state.all_participants[session_id] = {}
+    
+    st.session_state.all_participants[session_id][user_name] = datetime.now().isoformat()
+
+def get_session_participants(session_id):
+    """获取活跃参与者"""
+    if session_id not in st.session_state.all_participants:
+        return []
+    
+    cutoff = datetime.now() - timedelta(minutes=5)
+    active = []
+    
+    for user, last_active in st.session_state.all_participants[session_id].items():
+        try:
+            if datetime.fromisoformat(last_active) > cutoff:
+                active.append(user)
+        except:
+            pass
+    
+    return active
+
+def save_message(session_id, user, role, message):
+    """保存消息"""
+    if session_id not in st.session_state.all_sessions:
+        return
+    
+    st.session_state.all_sessions[session_id]["messages"].append({
+        "user": user,
+        "role": role,
+        "message": message,
+        "timestamp": datetime.now().isoformat()
+    })
+
+def get_history(session_id, limit=100):
+    """获取对话历史"""
+    if session_id not in st.session_state.all_sessions:
+        return []
+    
+    messages = st.session_state.all_sessions[session_id]["messages"]
+    return messages[-limit:] if len(messages) > limit else messages
+
+def get_session_info(session_id):
+    """获取会话信息"""
+    if session_id not in st.session_state.all_sessions:
+        return None
+    
+    info = st.session_state.all_sessions[session_id]
+    return {
+        "team_name": info["team_name"],
+        "topic": info["topic"],
+        "mode": info["mode"],
+        "created_at": info["created_at"],
+        "created_by": info["created_by"]
+    }
 
 # ========== CSS 优化 ==========
 st.markdown("""
@@ -50,7 +134,6 @@ st.markdown("""
         padding-bottom: 1rem !important;
     }
     
-    /* 欢迎页样式 */
     .welcome-container {
         max-width: 900px;
         margin: 0 auto;
@@ -75,7 +158,6 @@ st.markdown("""
         font-size: 1.1rem;
     }
     
-    /* AI 模式说明 */
     .mode-card {
         background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
         padding: 15px;
@@ -84,7 +166,6 @@ st.markdown("""
         margin-bottom: 15px;
     }
     
-    /* 会话面板 */
     .session-panel {
         background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
         padding: 16px;
@@ -107,7 +188,6 @@ st.markdown("""
         font-size: 1.2rem;
     }
     
-    /* 消息气泡 */
     .ai-bubble {
         background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
         padding: 12px 14px;
@@ -155,7 +235,6 @@ st.markdown("""
         color: #333;
     }
     
-    /* @AI 提示样式 */
     .ai-hint {
         background: #fff3cd;
         border-left: 4px solid #ffc107;
@@ -166,7 +245,6 @@ st.markdown("""
         color: #856404;
     }
     
-    /* 小组信息卡片 */
     .team-info-card {
         background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%);
         padding: 15px;
@@ -175,7 +253,6 @@ st.markdown("""
         margin-bottom: 15px;
     }
     
-    /* 主题卡片 */
     .topic-card {
         background: linear-gradient(135deg, #fff9e6 0%, #fff3cd 100%);
         padding: 20px;
@@ -183,11 +260,6 @@ st.markdown("""
         border-left: 5px solid #ffc107;
         margin-bottom: 20px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
-    .topic-card h3 {
-        color: #ff9800;
-        margin-top: 0;
     }
     
     h1, h2, h3 {
@@ -209,13 +281,6 @@ if "session_started" not in st.session_state:
     st.session_state.session_started = False
 if "session_start_time" not in st.session_state:
     st.session_state.session_start_time = None
-if "last_refresh" not in st.session_state:
-    st.session_state.last_refresh = datetime.now()
-
-# 自动刷新
-if (datetime.now() - st.session_state.last_refresh).seconds > 3:
-    st.session_state.last_refresh = datetime.now()
-    st.rerun()
 
 # ========== AI 模式配置 ==========
 MODE_OPTIONS = {
@@ -238,7 +303,7 @@ MODE_OPTIONS = {
 
 # ========== 流式显示 AI 响应函数 ==========
 def stream_ai_response(ai_reply, placeholder_container):
-    """流式显示 AI 回复 - 逐字出现的动画效果"""
+    """流式显示 AI 回复"""
     displayed_text = ""
     
     for char in ai_reply:
@@ -254,7 +319,6 @@ def stream_ai_response(ai_reply, placeholder_container):
         """, unsafe_allow_html=True)
         time.sleep(0.02)
     
-    # 移除光标，显示完整内容
     placeholder_container.markdown(f"""
     <div class="ai-bubble">
         <div class="bubble-header">
@@ -291,14 +355,6 @@ if not st.session_state.session_started:
     
     ### 💡 加入小组说明
     **重要：** 与其他成员填写**相同的「小组名称」和「讨论主题」**即可进入同一讨论界面！
-    
-    ### 🔐 知情同意
-    
-    **参与须知：**
-    - ✅ 你的所有对话数据将被记录用于研究
-    - ✅ 数据仅用于学术研究，不会公开个人身份
-    - ✅ 你可以随时退出研究
-    - ✅ 没有对错答案，我们关注你的思考过程
     """)
     
     st.divider()
@@ -318,7 +374,7 @@ if not st.session_state.session_started:
         
         team_name = st.text_input(
             "🏢 小组名称（与同组成员保持一致！）",
-            placeholder="如：小组1、Team A、讨论小组A",
+            placeholder="如：小组1、Team A",
             max_chars=30,
             key="login_team"
         )
@@ -334,8 +390,8 @@ if not st.session_state.session_started:
     
     st.divider()
     
-    st.markdown("### 📌 讨论主题（与同组成员保持一致！）")
-    st.info("💡 请输入要讨论的主题。**同组成员必须填入完全相同的主题**才能进入同一讨论")
+    st.markdown("### 📌 讨论主题")
+    st.info("💡 请输入要讨论的主题。**同组成员必须填入相同的主题**才能进入同一讨论")
     
     topic = st.text_area(
         "讨论主题",
@@ -344,7 +400,6 @@ if not st.session_state.session_started:
         key="login_topic"
     )
     
-    # 显示选中的 AI 模式信息
     if mode_select:
         mode_info = MODE_OPTIONS[mode_select]
         st.markdown(f"""
@@ -362,7 +417,6 @@ if not st.session_state.session_started:
         consent = st.checkbox("✅ 我已阅读并同意参与本研究")
         
         if st.button("🚀 进入讨论", use_container_width=True):
-            # 验证输入
             if not user_name.strip():
                 st.error("❌ 请输入你的名字")
             elif not team_name.strip():
@@ -372,7 +426,7 @@ if not st.session_state.session_started:
             elif not consent:
                 st.error("❌ 请同意参与本研究")
             else:
-                # 🎯 关键：获取或创建会话
+                # 创建或获取会话
                 session_id = get_or_create_session(
                     team_name=team_name.strip(),
                     topic=topic.strip(),
@@ -380,10 +434,8 @@ if not st.session_state.session_started:
                     created_by=user_name.strip()
                 )
                 
-                # 添加参与者
                 add_participant(session_id, user_name.strip())
                 
-                # 保存到 session_state
                 st.session_state.session_id = session_id
                 st.session_state.user_name = user_name.strip()
                 st.session_state.team_name = team_name.strip()
@@ -396,7 +448,6 @@ if not st.session_state.session_started:
 
 # ========== 讨论页面 ==========
 else:
-    # 获取会话信息
     session_info = get_session_info(st.session_state.session_id)
     
     if not session_info:
@@ -410,18 +461,15 @@ else:
         mode = session_info.get("mode", "Control")
         mode_info = MODE_OPTIONS.get(mode, {})
         
-        # 更新参与者状态
         add_participant(st.session_state.session_id, st.session_state.user_name)
         current_participants = get_session_participants(st.session_state.session_id)
         
-        # 获取讨论历史
         current_history = get_history(st.session_state.session_id, limit=500)
         
         # 左侧栏
         with st.sidebar:
             st.title("📱 Dialectical AI")
             
-            # ===== 小组信息 =====
             st.markdown("### 👥 会话信息")
             st.markdown(f"""
             <div class="team-info-card">
@@ -433,12 +481,10 @@ else:
             
             st.divider()
             
-            # ===== 会话统计 =====
             st.markdown("### 📊 Session Status")
             
-            # 计时器
             elapsed = datetime.now() - st.session_state.session_start_time
-            remaining = max(0, 2400 - int(elapsed.total_seconds()))  # 40分钟
+            remaining = max(0, 2400 - int(elapsed.total_seconds()))
             minutes = remaining // 60
             seconds = remaining % 60
             
@@ -461,7 +507,6 @@ else:
             
             st.divider()
             
-            # ===== 小组成员在线列表 =====
             st.markdown("**👥 小组成员在线**")
             if current_participants:
                 for member in current_participants:
@@ -474,7 +519,6 @@ else:
             
             st.divider()
             
-            # ===== 讨论主题 =====
             st.markdown(f"""
             <div class="topic-card">
                 <strong>📌 讨论主题：</strong><br><br>
@@ -484,7 +528,6 @@ else:
             
             st.divider()
             
-            # ===== AI 模式说明 =====
             st.markdown(f"""
             <div class="mode-card">
                 <strong>{mode_info.get('name', '未知模式')}</strong><br><br>
@@ -494,7 +537,6 @@ else:
             
             st.divider()
             
-            # ===== 导出数据 =====
             if st.button("📥 导出讨论记录", use_container_width=True):
                 history = get_history(st.session_state.session_id, limit=1000)
                 if history:
@@ -513,26 +555,22 @@ else:
         # ===== 主区域 =====
         st.markdown(f"## 💬 {team_name} 的讨论")
         
-        # 显示参与成员
-        members_str = ", ".join(current_participants)
+        members_str = ", ".join(current_participants) if current_participants else "暂无成员"
         st.markdown(f"**👥 参与成员：** {members_str}")
         st.markdown(f"**📌 主题：** {topic}")
         
         st.divider()
         
-        # @AI 使用提示
         if mode != "Control":
             st.markdown("""
             <div class="ai-hint">
-                💡 <strong>提示：</strong>在消息中使用 <code>@AI</code> 来艾特 AI 获得帮助。例如："这个例子对吗？@AI"
+                💡 <strong>提示：</strong>在消息中使用 <code>@AI</code> 来艾特 AI 获得帮助。
             </div>
             """, unsafe_allow_html=True)
         
-        # 进度条
         progress = min(len(current_history) / 40, 1.0)
         st.progress(progress, f"📊 {len(current_history)} 条消息")
         
-        # ===== 对话区域 =====
         st.markdown("### 💬 讨论记录")
         
         history = get_history(st.session_state.session_id, limit=500)
@@ -551,7 +589,6 @@ else:
                     time_str = ""
                 
                 if role == "assistant" or user == "AI":
-                    # AI 消息
                     col1, col2 = st.columns([0.08, 0.92])
                     with col2:
                         st.markdown(f"""
@@ -564,7 +601,6 @@ else:
                         </div>
                         """, unsafe_allow_html=True)
                 else:
-                    # 学生消息
                     col1, col2 = st.columns([0.92, 0.08])
                     with col1:
                         is_self = user == st.session_state.user_name
@@ -578,13 +614,11 @@ else:
                             <div class="message-content">{content}</div>
                         </div>
                         """, unsafe_allow_html=True)
-        
         else:
             st.info("💭 开始讨论！")
         
         st.divider()
         
-        # ===== 输入区域 =====
         st.markdown("### ✏️ 你的消息")
         
         col1, col2, col3 = st.columns([0.72, 0.14, 0.14])
@@ -592,7 +626,7 @@ else:
         with col1:
             user_input = st.text_area(
                 "",
-                placeholder="分享你的想法... (使用 @AI 艾特 AI 寻求帮助)",
+                placeholder="分享你的想法... (使用 @AI 艾特 AI)",
                 height=80,
                 label_visibility="collapsed"
             )
@@ -608,7 +642,6 @@ else:
         # ===== 处理发送 =====
         if send_btn:
             if user_input.strip():
-                # 保存用户消息
                 save_message(
                     st.session_state.session_id, 
                     st.session_state.user_name, 
@@ -617,10 +650,8 @@ else:
                 )
                 add_participant(st.session_state.session_id, st.session_state.user_name)
                 
-                # 检查是否艾特了 AI
                 ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
                 
-                # 只有在非对照组且消息中包含 @AI 时才生成 AI 回复
                 if ai_triggered and mode != "Control":
                     conversation_history = get_history(st.session_state.session_id, limit=20)
                     
@@ -632,7 +663,7 @@ else:
                             user=st.session_state.user_name,
                             conversation_history=conversation_history
                         )
-                        # 保存 AI 消息到数据库
+                        
                         save_message(
                             st.session_state.session_id, 
                             "AI", 
@@ -640,7 +671,6 @@ else:
                             ai_reply
                         )
                         
-                        # 显示流式 AI 响应
                         ai_placeholder = st.empty()
                         stream_ai_response(ai_reply, ai_placeholder)
                 
@@ -649,114 +679,3 @@ else:
         
         if clear_btn:
             st.rerun()
-        
-        st.divider()
-        
-        # ===== 分析区域 =====
-        st.markdown("### 📊 批判性思维分析")
-        
-        if history:
-            stats = analyzer.analyze_history(history, verbose=True)
-            
-            # ===== 核心指标 =====
-            st.markdown("#### 🎯 讨论质量指标")
-            col1, col2, col3, col4, col5 = st.columns(5)
-            
-            metrics = [
-                ("❓", "提问", stats["questions"], "引导式提问次数"),
-                ("🔄", "反驳", stats["counterarguments"], "提出反对意见次数"),
-                ("📊", "证据", stats["evidence"], "引用证据或例子次数"),
-                ("🎯", "澄清", stats["clarifications"], "澄清或重述次数"),
-                ("👍", "同意", stats["agreements"], "表示同意或补充次数"),
-            ]
-            
-            for col, (emoji, label, val, description) in zip(
-                [col1, col2, col3, col4, col5],
-                metrics
-            ):
-                with col:
-                    st.metric(
-                        label=f"{emoji} {label}",
-                        value=val,
-                        help=description
-                    )
-            
-            # ===== 汇总统计 =====
-            st.markdown("#### 📈 讨论统计")
-            col1, col2, col3 = st.columns(3)
-            
-            total = sum([stats["questions"], stats["counterarguments"], stats["evidence"], 
-                         stats["clarifications"], stats["agreements"]])
-            avg = total / max(stats["user_messages"], 1)
-            
-            with col1:
-                st.metric(
-                    label="💬 平均指标/条消息",
-                    value=f"{avg:.2f}",
-                    help="每条学生消息中平均出现的批判性思维指标个数（越高越好）"
-                )
-            
-            with col2:
-                st.metric(
-                    label="🗣️ 学生发言数",
-                    value=stats["user_messages"],
-                    help="学生发送的消息总数"
-                )
-            
-            with col3:
-                st.metric(
-                    label="🤖 AI 回复数",
-                    value=stats["ai_messages"],
-                    help="AI 助手的回复总数"
-                )
-            
-            # ===== 详细说明 =====
-            st.markdown("#### 📝 指标说明")
-            
-            with st.expander("📖 展开查看各指标的详细解释", expanded=False):
-                st.markdown("""
-                **❓ 提问 (Questions)**
-                - 包括「为什么」「如何」「是否」等疑问
-                - 高分表示学生主动提问，激发深度思考
-                
-                **🔄 反驳 (Counterarguments)**
-                - 包括「但是」「相反」「我不同意」等相反观点
-                - 高分表示学生能进行批判性分析
-                
-                **📊 证据 (Evidence)**
-                - 包括引用例子、数据、研究、事实等
-                - 高分表示学生论证有据可查
-                
-                **🎯 澄清 (Clarifications)**
-                - 包括重述、解释、简化复杂概念
-                - 高分表示学生思考严谨、表达清晰
-                
-                **👍 同意 (Agreements)**
-                - 包括表示赞成、补充观点、延伸讨论
-                - 高分表示学生能建立在他人观点基础上
-                """)
-            
-            # ===== 讨论深度评估 =====
-            st.markdown("#### 🎓 讨论深度评估")
-            
-            if avg >= 1.5:
-                assessment = "🌟 **优秀** - 你的讨论非常深入，批判性思维指标特别高！"
-                color = "#4CAF50"
-            elif avg >= 1.0:
-                assessment = "⭐ **良好** - 你的讨论质量不错，能很好地展现批判性思维。"
-                color = "#2196F3"
-            elif avg >= 0.5:
-                assessment = "👍 **中等** - 你的讨论有一定深度，可以继续增强论证和提问。"
-                color = "#FF9800"
-            else:
-                assessment = "💡 **需要改进** - 尝试更多提问、引用证据或提出反对意见。"
-                color = "#F44336"
-            
-            st.markdown(f"""
-            <div style="background-color: {color}; padding: 15px; border-radius: 8px; color: white;">
-                {assessment}
-            </div>
-            """, unsafe_allow_html=True)
-        
-        else:
-            st.info("💭 开始聊天以查看批判性思维分析")
