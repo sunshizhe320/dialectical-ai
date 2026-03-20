@@ -743,3 +743,123 @@ else:
         
         if clear_btn:
             st.rerun()
+
+                    # ========== 分析面板 ==========
+        st.divider()
+        
+        st.markdown("### 📊 批判性思维分析")
+        
+        if history:
+            # 分析讨论数据
+            stats = {
+                "questions": sum(1 for h in history if any(w in h["message"] for w in ["为什么", "如何", "怎样", "？"])),
+                "counterarguments": sum(1 for h in history if any(w in h["message"] for w in ["但是", "相反", "不同意"])),
+                "evidence": sum(1 for h in history if any(w in h["message"] for w in ["例如", "比如", "数据", "证据"])),
+                "clarifications": sum(1 for h in history if any(w in h["message"] for w in ["也就是", "换句话说", "简单来说"])),
+                "agreements": sum(1 for h in history if any(w in h["message"] for w in ["同意", "确实", "赞成", "好点子"])),
+                "user_messages": sum(1 for h in history if h["role"] != "assistant"),
+                "ai_messages": sum(1 for h in history if h["role"] == "assistant")
+            }
+            
+            # ===== 讨论质量指标 =====
+            st.markdown("#### 🎯 讨论质量指标")
+            col1, col2, col3, col4, col5 = st.columns(5)
+            
+            metrics = [
+                ("❓", "提问", stats["questions"], "引导式提问次数"),
+                ("🔄", "反驳", stats["counterarguments"], "提出反对意见次数"),
+                ("📊", "证据", stats["evidence"], "引用证据或例子次数"),
+                ("🎯", "澄清", stats["clarifications"], "澄清或重述次数"),
+                ("👍", "同意", stats["agreements"], "表示同意或补充次数"),
+            ]
+            
+            for col, (emoji, label, val, description) in zip(
+                [col1, col2, col3, col4, col5],
+                metrics
+            ):
+                with col:
+                    st.metric(
+                        label=f"{emoji} {label}",
+                        value=val,
+                        help=description
+                    )
+            
+            # ===== 讨论统计 =====
+            st.markdown("#### 📈 讨论统计")
+            col1, col2, col3 = st.columns(3)
+            
+            total = sum([stats["questions"], stats["counterarguments"], stats["evidence"], 
+                         stats["clarifications"], stats["agreements"]])
+            avg = total / max(stats["user_messages"], 1)
+            
+            with col1:
+                st.metric(
+                    label="💬 平均指标/条消息",
+                    value=f"{avg:.2f}",
+                    help="每条学生消息中平均出现的批判性思维指标个数（越高越好）"
+                )
+            
+            with col2:
+                st.metric(
+                    label="🗣️ 学生发言数",
+                    value=stats["user_messages"],
+                    help="学生发送的消息总数"
+                )
+            
+            with col3:
+                st.metric(
+                    label="🤖 AI 回复数",
+                    value=stats["ai_messages"],
+                    help="AI 助手的回复总数"
+                )
+            
+            # ===== 详细说明 =====
+            st.markdown("#### 📝 指标说明")
+            
+            with st.expander("📖 展开查看各指标的详细解释", expanded=False):
+                st.markdown("""
+                **❓ 提问 (Questions)**
+                - 包括「为什么」「如何」「是否」等疑问
+                - 高分表示学生主动提问，激发深度思考
+                
+                **🔄 反驳 (Counterarguments)**
+                - 包括「但是」「相反」「我不同意」等相反观点
+                - 高分表示学生能进行批判性分析
+                
+                **📊 证据 (Evidence)**
+                - 包括引用例子、数据、研究、事实等
+                - 高分表示学生论证有据可查
+                
+                **🎯 澄清 (Clarifications)**
+                - 包括重述、解释、简化复杂概念
+                - 高分表示学生思考严谨、表达清晰
+                
+                **👍 同意 (Agreements)**
+                - 包括表示赞成、补充观点、延伸讨论
+                - 高分表示学生能建立在他人观点基础上
+                """)
+            
+            # ===== 讨论深度评估 =====
+            st.markdown("#### 🎓 讨论深度评估")
+            
+            if avg >= 1.5:
+                assessment = "🌟 **优秀** - 你的讨论非��深入，批判性思维指标特别高！"
+                color = "#4CAF50"
+            elif avg >= 1.0:
+                assessment = "⭐ **良好** - 你的讨论质量不错，能很好地展现批判性思维。"
+                color = "#2196F3"
+            elif avg >= 0.5:
+                assessment = "👍 **中等** - 你的讨论有一定深度，可以继续增强论证和提问。"
+                color = "#FF9800"
+            else:
+                assessment = "💡 **需要改进** - 尝试更多提问、引用证据或提出反对意见。"
+                color = "#F44336"
+            
+            st.markdown(f"""
+            <div style="background-color: {color}; padding: 15px; border-radius: 8px; color: white;">
+                {assessment}
+            </div>
+            """, unsafe_allow_html=True)
+        
+        else:
+            st.info("💭 开始聊天以查看批判性思维分析")
