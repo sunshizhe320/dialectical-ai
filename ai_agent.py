@@ -1,18 +1,16 @@
 """
-ai_agent.py
-AI Response Generation Module - Kimi (Moonshot) API
-Full English Version with Bug Fixes
+ai_agent.py (Improved Version)
+AI Response Generation with Fixed API Calls for All Modes
 """
 import os
 import re
 import random
 from dotenv import load_dotenv
 import streamlit as st
+import requests
 
-# Load environment variables
 load_dotenv()
 
-# Get API Key - Priority from Streamlit Secrets
 MOONSHOT_KEY = None
 
 try:
@@ -28,7 +26,6 @@ if not MOONSHOT_KEY:
     if MOONSHOT_KEY:
         print(f"✅ MOONSHOT_API_KEY loaded from Environment Variables")
 
-# Print Initialization Status
 print(f"\n{'='*80}")
 print(f"[🔧 AI Agent Initialization]")
 if MOONSHOT_KEY:
@@ -39,51 +36,18 @@ print(f"{'='*80}\n")
 
 DEBUG_MODE = True
 
-def generate_response(mode, user_message, group_id="", user="", conversation_history=None, custom_prompt=None):
-    """Generate AI response based on the selected mode"""
-    
-    if DEBUG_MODE:
-        print(f"\n{'='*80}")
-        print(f"[📝 generate_response called]")
-        print(f"  mode: {mode}")
-        print(f"  user: {user}")
-        print(f"  message: {user_message[:50]}...")
-        print(f"  MOONSHOT_KEY available: {bool(MOONSHOT_KEY)}")
-    
-    if mode == "Control":
-        return "(This is the control group - no AI intervention)"
-    
+
+def _call_kimi_api(system_prompt, user_message, max_tokens=500):
+    """
+    ✅ 统一的API调用函数 - 所有模式都使用这个
+    """
     if not MOONSHOT_KEY:
         error_msg = "❌ API Key not configured"
         if DEBUG_MODE:
             print(f"[❌ Error] {error_msg}")
-        return error_msg
-    
-def generate_response(mode, user_message, group_id="", user="", conversation_history=None, custom_prompt=None):
-    """Generate AI response based on the selected mode"""
-    
-    if DEBUG_MODE:
-        print(f"\n{'='*80}")
-        print(f"[📝 generate_response called]")
-        print(f"  mode: {mode}")
-        print(f"  user: {user}")
-        print(f"  message: {user_message[:50]}...")
-        print(f"  MOONSHOT_KEY available: {bool(MOONSHOT_KEY)}")
-    
-    if mode == "Control":
-        return "(This is the control group - no AI intervention)"
-    
-    if not MOONSHOT_KEY:
-        error_msg = "❌ API Key not configured"
-        if DEBUG_MODE:
-            print(f"[❌ Error] {error_msg}")
-        return error_msg
-    
-    system_prompt = _get_system_prompt(mode)
+        return None
     
     try:
-        import requests
-        
         if DEBUG_MODE:
             print(f"[🔄 Calling Kimi API...]")
         
@@ -101,7 +65,7 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
                 {"role": "user", "content": user_message}
             ],
             "temperature": 0.7,
-            "max_tokens": 300
+            "max_tokens": max_tokens
         }
         
         response = requests.post(
@@ -113,7 +77,6 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
         
         if DEBUG_MODE:
             print(f"  Status Code: {response.status_code}")
-            print(f"  Response Text: {response.text[:500]}")  # ← 添加这行看完整响应
         
         if response.status_code == 200:
             result = response.json()
@@ -123,29 +86,41 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
                 
                 if content:
                     if DEBUG_MODE:
-                        print(f"  ✅ Success!")
-                        print(f"  Response length: {len(content)} characters")
-                        print(f"{'='*80}\n")
+                        print(f"  ✅ Success! Response length: {len(content)} characters")
                     return content
-                else:
-                    if DEBUG_MODE:
-                        print(f"  ❌ Empty content in response")
-                    return _get_fallback(mode)
-        else:
-            if DEBUG_MODE:
-                print(f"  ❌ API Error: {response.status_code}")
-                print(f"  Response: {response.text[:500]}")
-            return _get_fallback(mode)
+        
+        if DEBUG_MODE:
+            print(f"  ❌ API Error: {response.status_code}")
+        return None
     
     except Exception as e:
         if DEBUG_MODE:
-            print(f"  ❌ Exception: {type(e).__name__}")
-            print(f"  Message: {str(e)}")
-            import traceback
-            traceback.print_exc()  # ← 添加完整堆栈跟踪
-        
-        return _get_fallback(mode)
+            print(f"  ❌ Exception: {type(e).__name__}: {str(e)}")
+        return None
+
+
+def generate_response(mode, user_message, group_id="", user="", conversation_history=None, custom_prompt=None):
+    """Generate AI response based on the selected mode"""
     
+    if DEBUG_MODE:
+        print(f"\n{'='*80}")
+        print(f"[📝 generate_response called]")
+        print(f"  mode: {mode}")
+        print(f"  user: {user}")
+        print(f"  message: {user_message[:50]}...")
+    
+    if mode == "Control":
+        return "(This is the control group - no AI intervention)"
+    
+    system_prompt = _get_system_prompt(mode)
+    
+    # ✅ 统一调用API - 不再有重复代码
+    response = _call_kimi_api(system_prompt, user_message, max_tokens=300)
+    
+    if response:
+        return response
+    else:
+        return _get_fallback(mode)
 
 
 def _get_system_prompt(mode):
@@ -210,10 +185,13 @@ def _get_fallback(mode):
 
 def generate_argument_map(messages, topic):
     """
-    Analyze conversation history and extract a structured argumentation map.
-    Output in English.
+    ✅ 改进版本：使用结构化提示生成规范的论证分析表格
+    - 清晰的表格格式
+    - 论证共识部分
+    - 核心分歧部分
+    - 后续讨论建议
     """
-    # Clean and organize history text
+    # 整理对话历史
     history_text = ""
     for m in messages:
         user_name = m.get('user', 'Unknown')
@@ -221,27 +199,53 @@ def generate_argument_map(messages, topic):
         if content:
             history_text += f"{user_name}: {content}\n"
     
-    # Build English Prompt
+    # ✅ 改进的英文提示 - 结构更清晰
     prompt = f"""
-    You are an expert in argumentation analysis and critical thinking.
+You are an expert in argumentation analysis and critical thinking.
+
+TASK: Analyze the following discussion about: "{topic}"
+
+OUTPUT FORMAT (MUST follow exactly):
+
+## 🎯 Core Conclusion
+[One sentence summary of the main discussion outcome]
+
+## 📊 Structured Argument Table
+| Participant | Stance | Core Argument | Supporting Evidence |
+|---|---|---|---|
+| [Name] | [Support/Oppose/Neutral] | [Main claim in 1 sentence] | [Key reasons/examples] |
+
+(Create one row for each distinct participant position)
+
+## 🤝 Discussion Consensus
+List 2-3 points that both sides agree on or acknowledge.
+
+## ⚔️ Core Disagreement
+List 2-3 main points where the participants fundamentally disagree.
+
+## 💭 Suggestions for Deeper Discussion
+1. [Specific question exploring tension between positions]
+2. [Specific question about evidence or assumptions]
+3. [Specific question about long-term implications]
+
+---
+Discussion History:
+{history_text}
+
+Please provide your analysis in clear, structured English with markdown formatting.
+"""
     
-    Task: Analyze the following discussion about: "{topic}"
+    # ✅ 用改进的API调用 - 允许更长的响应
+    response = _call_kimi_api(
+        system_prompt="You are an expert argumentation analyst. Provide structured, markdown-formatted analysis.",
+        user_message=prompt,
+        max_tokens=800  # 允许更长的分析
+    )
     
-    REQUIREMENTS (MUST output in English):
-    1. Create a summary table with columns: [Participant | Stance | Core Argument | Evidence]
-    2. Identify the main positions and supporting evidence
-    3. Provide a brief "Current Consensus" section
-    4. List 2-3 suggestions for deeper analysis or continued discussion
-    
-    Discussion History:
-    {history_text}
-    
-    Please provide your analysis in clear, structured English.
-    """
-    
-    # Use the existing response engine
-    response = generate_response("AI-Scaffolded", prompt)
-    return response
+    if response:
+        return response
+    else:
+        return "⚠️ Unable to generate argument map. Please try again."
 
 
 # End of file
