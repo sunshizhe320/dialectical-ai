@@ -428,7 +428,7 @@ if not st.session_state.session_started:
     
     **示例：**
     - 小组名称：`小组1`
-    - 讨论主题：`世界上有愚蠢的问题嘛`
+    - 讨论主题：`人工智能是否应该被允许参与中小学教育？`
     
     只要两个人填的完全一样，就会自动同步到一个界面！
     """)
@@ -766,181 +766,27 @@ else:
         if clear_btn:
             st.rerun()
 
-        # ========== 分析面板 ==========
-        st.divider()
+st.divider()
+st.subheader("🕸️ 论证图谱 (Argumentation Map)")
+
+# 添加一个手动刷新按钮，或者你可以根据消息数量自动触发
+if st.button("🔍 更新论证逻辑分析", use_container_width=True):
+    with st.spinner("AI 正在解析论证结构..."):
+        # 获取当前 Session 的所有消息
+        from db import get_messages  # 确保你导入了获取消息的函数
+        current_msgs = get_messages(st.session_state.session_id)
         
-        st.markdown("### 📊 批判性思维分析")
-        
-        if history:
-            # 安全的分析方法
-            try:
-                stats = {
-                    "questions": 0,
-                    "counterarguments": 0,
-                    "evidence": 0,
-                    "clarifications": 0,
-                    "agreements": 0,
-                    "user_messages": 0,
-                    "ai_messages": 0
-                }
-                
-                # 遍历历史记录进行统计
-                for h in history:
-                    msg = str(h.get("message", "")).lower()
-                    role = h.get("role", "")
-                    
-                    # 统计用户消息
-                    if role != "assistant":
-                        stats["user_messages"] += 1
-                    else:
-                        stats["ai_messages"] += 1
-                    
-                    # 检查特定关键词
-                    if any(w in msg for w in ["为什么", "如何", "怎样", "？", "?"]):
-                        stats["questions"] += 1
-                    
-                    if any(w in msg for w in ["但是", "相反", "不同意", "反对"]):
-                        stats["counterarguments"] += 1
-                    
-                    if any(w in msg for w in ["例如", "比如", "数据", "证据", "研究"]):
-                        stats["evidence"] += 1
-                    
-                    if any(w in msg for w in ["也就是", "换句话说", "简单来说", "即"]):
-                        stats["clarifications"] += 1
-                    
-                    if any(w in msg for w in ["同意", "确实", "赞成", "好点子", "同感"]):
-                        stats["agreements"] += 1
-                
-                # 遍历历史记录进行统计
-                for h in history:
-                    msg = str(h.get("message", "")).lower()
-                    role = h.get("role", "")
-                    
-                    # 统计用户消息
-                    if role != "assistant":
-                        stats["user_messages"] += 1
-                    else:
-                        stats["ai_messages"] += 1
-                    
-                    # 检查特定关键词
-                    if any(w in msg for w in ["为什么", "如何", "怎样", "？", "?"]):
-                        stats["questions"] += 1
-                    
-                    if any(w in msg for w in ["但是", "相反", "不同意", "反对"]):
-                        stats["counterarguments"] += 1
-                    
-                    if any(w in msg for w in ["例如", "比如", "数据", "证据", "研究"]):
-                        stats["evidence"] += 1
-                    
-                    if any(w in msg for w in ["也就是", "换句话说", "简单来说", "即"]):
-                        stats["clarifications"] += 1
-                    
-                    if any(w in msg for w in ["同意", "确实", "赞成", "好点子", "同感"]):
-                        stats["agreements"] += 1
-                
-                # ===== 讨论质量指标 =====
-                st.markdown("#### 🎯 讨论质量指标")
-                col1, col2, col3, col4, col5 = st.columns(5)
-                
-                metrics = [
-                    ("❓", "提问", stats["questions"], "引导式提问次数"),
-                    ("🔄", "反驳", stats["counterarguments"], "提出反对意见次数"),
-                    ("📊", "证据", stats["evidence"], "引用证据或例子次数"),
-                    ("🎯", "澄清", stats["clarifications"], "澄清或重述次数"),
-                    ("👍", "同意", stats["agreements"], "表示同意或补充次数"),
-                ]
-                
-                for col, (emoji, label, val, description) in zip(
-                    [col1, col2, col3, col4, col5],
-                    metrics
-                ):
-                    with col:
-                        st.metric(
-                            label=f"{emoji} {label}",
-                            value=val,
-                            help=description
-                        )
-                
-                # ===== 讨论统计 =====
-                st.markdown("#### 📈 讨论统计")
-                col1, col2, col3 = st.columns(3)
-                
-                total = sum([stats["questions"], stats["counterarguments"], stats["evidence"], 
-                             stats["clarifications"], stats["agreements"]])
-                avg = total / max(stats["user_messages"], 1)
-                
-                with col1:
-                    st.metric(
-                        label="💬 平均指标/条消息",
-                        value=f"{avg:.2f}",
-                        help="每条学生消息中平均出现的批判性思维指标个数（越高越好）"
-                    )
-                
-                with col2:
-                    st.metric(
-                        label="🗣️ 学生发言数",
-                        value=stats["user_messages"],
-                        help="学生发送的消息总数"
-                    )
-                
-                with col3:
-                    st.metric(
-                        label="🤖 AI 回复数",
-                        value=stats["ai_messages"],
-                        help="AI 助手的回复总数"
-                    )
-                
-                # ===== 详细说明 =====
-                st.markdown("#### 📝 指标说明")
-                
-                with st.expander("📖 展开查看各指标的详细解释", expanded=False):
-                    st.markdown("""
-                    **❓ 提问 (Questions)**
-                    - 包括「为什么」「如何」「是否」等疑问
-                    - 高分表示学生主动提问，激发深度思考
-                    
-                    **🔄 反驳 (Counterarguments)**
-                    - 包括「但是」「相反」「我不同意」等相反观点
-                    - 高分表示学生能进行批判性分析
-                    
-                    **📊 证据 (Evidence)**
-                    - 包括引用例子、数据、研究、事实等
-                    - 高分表示学生论证有据可查
-                    
-                    **🎯 澄清 (Clarifications)**
-                    - 包括重述、解释、简化复杂概念
-                    - 高分表示学生思考严谨、表达清晰
-                    
-                    **👍 同意 (Agreements)**
-                    - 包括表示赞成、补充观点、延伸讨论
-                    - 高分表示学生能建立在他人观点基础上
-                    """)
-                
-                # ===== 讨论深度评估 =====
-                st.markdown("#### 🎓 讨论深度评估")
-                
-                if avg >= 1.5:
-                    assessment = "🌟 **优秀** - 你的讨论非常深入，批判性思维指标特别高！"
-                    color = "#4CAF50"
-                elif avg >= 1.0:
-                    assessment = "⭐ **良好** - 你的讨论质量不错，能很好地展现批判性思维。"
-                    color = "#2196F3"
-                elif avg >= 0.5:
-                    assessment = "👍 **中等** - 你的讨论有一定深度，可以继续增强论证和提问。"
-                    color = "#FF9800"
-                else:
-                    assessment = "💡 **需要改进** - 尝试更多提问、引用证据或提出反对意见。"
-                    color = "#F44336"
-                
-                st.markdown(f"""
-                <div style="background-color: {color}; padding: 15px; border-radius: 8px; color: white;">
-                    {assessment}
-                </div>
-                """, unsafe_allow_html=True)
-            
-            except Exception as e:
-                st.error(f"❌ 分析失败: {str(e)}")
-                print(f"分析错误: {e}")
-        
+        if len(current_msgs) > 1:
+            # 调用新写的 AI 函数
+            arg_map_content = generate_argument_map(current_msgs, st.session_state.topic)
+            st.session_state.last_arg_map = arg_map_content
         else:
-            st.info("💭 开始聊天以查看批判性思维分析")
+            st.info("对话尚未开始，暂无图谱。")
+
+# 显示生成的图谱
+if "last_arg_map" in st.session_state:
+    with st.container(border=True):
+        st.markdown(st.session_state.last_arg_map)
+        
+        # 增加一个元认知引导，进一步激发批判性思维
+        st.info("💡 **思维挑战**：观察上方的图谱，是否有某个观点缺乏论据？或者谁的立场被误解了？请在对话中指出。")
