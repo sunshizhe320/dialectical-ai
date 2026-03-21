@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
-# from ai_agent import generate_response
+from ai_agent import generate_response, generate_argument_map
 from discourse_analysis import analyzer
 
 load_dotenv()
@@ -776,26 +776,21 @@ else:
         st.subheader("🕸️ Real-time Argument Map")
 
         if st.button("🔍 Update Argument Analysis", key="update_map_final", use_container_width=True):
-            # 注释掉或删除这一行
-            # from ai_agent import generate_argument_map
-            
-            # Get messages from JSON storage
             all_data = load_all_sessions()
             current_sess = all_data.get(st.session_state.session_id, {})
             messages = current_sess.get("messages", [])
+    
+    if len(messages) > 1:
+        with st.spinner("AI is analyzing the logic in depth..."):
+            topic = session_info.get("topic", 'Current Discussion')
+            # 调用函数进行分析
+            map_result = generate_argument_map(messages, topic)
+            st.session_state.current_arg_map = map_result
             
-            if len(messages) > 1:
-                with st.spinner("AI is analyzing the logic in depth..."):
-                    topic = st.session_state.get('topic', 'Current Discussion')
-                    # 注释掉下面这行 - 函数不存在
-                    # map_result = generate_argument_map(messages, topic)
-                    # st.session_state.current_arg_map = map_result
-                    
-                    # 改为显示简单的统计信息
-                    st.success("✅ Analysis complete")
-                    st.rerun()
-            else:
-                st.warning("⚠️ Not enough messages yet. AI cannot analyze yet. Please chat more!")
+            st.success("✅ Analysis complete")
+            st.rerun()
+    else:
+        st.warning("⚠️ Not enough messages yet. AI cannot analyze yet. Please chat more!")
 
         # Display area
         if "current_arg_map" in st.session_state and st.session_state.current_arg_map:
