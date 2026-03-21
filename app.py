@@ -60,18 +60,21 @@ def save_all_participants(data):
         print(f"❌ Failed to save participants: {e}")
 
 def get_or_create_session(team_name, topic, mode, created_by):
-    """Get or create session - true cross-device synchronization"""
+    """Get or create session - include mode in session ID"""
     all_sessions = load_all_sessions()
     
-    # Check if session with same team and topic exists
+    # Check if session with same team, topic AND mode exists
     for sid, info in all_sessions.items():
-        if info.get("team_name") == team_name and info.get("topic") == topic:
+        if (info.get("team_name") == team_name and 
+            info.get("topic") == topic and 
+            info.get("mode") == mode):  # ✅ 添加这一行
             print(f"✅ Found existing session: {sid}")
             return sid
     
-    # Create new session
+    # Create new session - include mode in ID
     topic_short = topic.replace('?', '').replace('？', '')[:20]
-    session_id = f"{team_name}_{topic_short}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # ✅ 修改这一行，加入 mode
+    session_id = f"{team_name}_{topic_short}_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     all_sessions[session_id] = {
         "team_name": team_name,
