@@ -765,28 +765,26 @@ else:
         
         if clear_btn:
             st.rerun()
+            st.session_state.current_arg_map = None
+# --- 只有在用户选择了 Session 并进入讨论后，才显示图谱 ---
+    if "session_id" in st.session_state and st.session_state.session_id:
+        # 注意！下面这些行必须比上面的 if 往右多出 4 个空格
+        st.divider() 
+        st.subheader("🕸️ 实时论证图谱 (Argumentation Map)")
 
-st.divider()
-st.subheader("🕸️ 论证图谱 (Argumentation Map)")
+        # 刷新按钮
+        if st.button("🔍 更新论证分析", use_container_width=True):
+            from db import get_messages
+            from ai_agent import generate_argument_map
+            all_messages = get_messages(st.session_state.session_id)
+            
+            if len(all_messages) > 1:
+                with st.spinner("AI 正在解析逻辑..."):
+                    map_result = generate_argument_map(all_messages, st.session_state.topic)
+                    st.session_state.current_arg_map = map_result
+                    st.rerun()
 
-# 添加一个手动刷新按钮，或者你可以根据消息数量自动触发
-if st.button("🔍 更新论证逻辑分析", use_container_width=True):
-    with st.spinner("AI 正在解析论证结构..."):
-        # 获取当前 Session 的所有消息
-        from db import get_messages  # 确保你导入了获取消息的函数
-        current_msgs = get_messages(st.session_state.session_id)
-        
-        if len(current_msgs) > 1:
-            # 调用新写的 AI 函数
-            arg_map_content = generate_argument_map(current_msgs, st.session_state.topic)
-            st.session_state.last_arg_map = arg_map_content
-        else:
-            st.info("对话尚未开始，暂无图谱。")
-
-# 显示生成的图谱
-if "last_arg_map" in st.session_state:
-    with st.container(border=True):
-        st.markdown(st.session_state.last_arg_map)
-        
-        # 增加一个元认知引导，进一步激发批判性思维
-        st.info("💡 **思维挑战**：观察上方的图谱，是否有某个观点缺乏论据？或者谁的立场被误解了？请在对话中指出。")
+        # 显示图谱内容
+        if "current_arg_map" in st.session_state:
+            with st.container(border=True):
+                st.markdown(st.session_state.current_arg_map)
