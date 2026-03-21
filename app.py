@@ -10,8 +10,6 @@ from dotenv import load_dotenv
 from ai_agent import generate_response
 from discourse_analysis import analyzer
 
-
-
 load_dotenv()
 
 st.set_page_config(
@@ -20,13 +18,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ========== 使用文件系统作为共享存储（跨设备同步） ==========
+# ========== File system storage for cross-device synchronization ==========
 
 SESSIONS_FILE = "sessions_data.json"
 PARTICIPANTS_FILE = "participants_data.json"
 
 def load_all_sessions():
-    """从文件加载所有会话"""
+    """Load all sessions from file"""
     if Path(SESSIONS_FILE).exists():
         try:
             with open(SESSIONS_FILE, 'r', encoding='utf-8') as f:
@@ -36,15 +34,15 @@ def load_all_sessions():
     return {}
 
 def save_all_sessions(data):
-    """保存所有会话到文件"""
+    """Save all sessions to file"""
     try:
         with open(SESSIONS_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"❌ 保存会话失败: {e}")
+        print(f"❌ Failed to save sessions: {e}")
 
 def load_all_participants():
-    """从文件加载所有参与者"""
+    """Load all participants from file"""
     if Path(PARTICIPANTS_FILE).exists():
         try:
             with open(PARTICIPANTS_FILE, 'r', encoding='utf-8') as f:
@@ -54,25 +52,25 @@ def load_all_participants():
     return {}
 
 def save_all_participants(data):
-    """保存所有参与者到文件"""
+    """Save all participants to file"""
     try:
         with open(PARTICIPANTS_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"❌ 保存参与者失败: {e}")
+        print(f"❌ Failed to save participants: {e}")
 
 def get_or_create_session(team_name, topic, mode, created_by):
-    """获取或创建会话 - 真正的跨设备同步"""
+    """Get or create session - true cross-device synchronization"""
     all_sessions = load_all_sessions()
     
-    # 检查是否已存在相同的小组+主题
+    # Check if session with same team and topic exists
     for sid, info in all_sessions.items():
         if info.get("team_name") == team_name and info.get("topic") == topic:
-            print(f"✅ 找到现有会话: {sid}")
+            print(f"✅ Found existing session: {sid}")
             return sid
     
-    # 创建新会话
-    topic_short = topic.replace('？', '').replace('?', '')[:20]
+    # Create new session
+    topic_short = topic.replace('?', '').replace('？', '')[:20]
     session_id = f"{team_name}_{topic_short}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     all_sessions[session_id] = {
@@ -85,11 +83,11 @@ def get_or_create_session(team_name, topic, mode, created_by):
     }
     
     save_all_sessions(all_sessions)
-    print(f"✅ 创建新会话: {session_id}")
+    print(f"✅ Created new session: {session_id}")
     return session_id
 
 def add_participant(session_id, user_name):
-    """添加参与者"""
+    """Add participant"""
     all_participants = load_all_participants()
     
     if session_id not in all_participants:
@@ -99,7 +97,7 @@ def add_participant(session_id, user_name):
     save_all_participants(all_participants)
 
 def get_session_participants(session_id):
-    """获取活跃参与者"""
+    """Get active participants"""
     all_participants = load_all_participants()
     
     if session_id not in all_participants:
@@ -118,11 +116,11 @@ def get_session_participants(session_id):
     return active
 
 def save_message(session_id, user, role, message):
-    """保存消息 - 同步到文件"""
+    """Save message - synchronize to file"""
     all_sessions = load_all_sessions()
     
     if session_id not in all_sessions:
-        print(f"❌ 会话不存在: {session_id}")
+        print(f"❌ Session does not exist: {session_id}")
         return
     
     all_sessions[session_id]["messages"].append({
@@ -133,10 +131,10 @@ def save_message(session_id, user, role, message):
     })
     
     save_all_sessions(all_sessions)
-    print(f"✅ 消息已保存")
+    print(f"✅ Message saved")
 
 def get_history(session_id, limit=100):
-    """获取对话历史"""
+    """Get conversation history"""
     all_sessions = load_all_sessions()
     
     if session_id not in all_sessions:
@@ -146,7 +144,7 @@ def get_history(session_id, limit=100):
     return messages[-limit:] if len(messages) > limit else messages
 
 def get_session_info(session_id):
-    """获取会话信息"""
+    """Get session info"""
     all_sessions = load_all_sessions()
     
     if session_id not in all_sessions:
@@ -161,7 +159,7 @@ def get_session_info(session_id):
         "created_by": info.get("created_by")
     }
 
-# ========== CSS 和其他代码保持不变 ==========
+# ========== CSS styling ==========
 st.markdown("""
 <style>
     @keyframes blink {
@@ -333,7 +331,7 @@ if "session_started" not in st.session_state:
 if "session_start_time" not in st.session_state:
     st.session_state.session_start_time = None
 
-# 每隔一段时间刷新，以同步其他设备的消息
+# Auto-refresh to synchronize across devices
 if st.session_state.session_started:
     if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = datetime.now()
@@ -342,37 +340,37 @@ if st.session_state.session_started:
         st.session_state.last_refresh = datetime.now()
         st.rerun()
 
-# ========== AI 模式配置 ==========
+# ========== AI Mode Configuration ==========
 MODE_OPTIONS = {
     "AI-Scaffolded": {
-        "name": "🎓 苏格拉底式教学",
-        "description": "AI将通过问题引导你深入思考",
+        "name": "🎓 Socratic Tutoring",
+        "description": "AI will guide you to think deeply through questions",
         "icon": "🎓"
     },
     "AI-Free-Debater": {
-        "name": "⚔️ 积极辩手",
-        "description": "AI将提出反对观点并要求证据",
+        "name": "⚔️ Active Debater",
+        "description": "AI will present counterarguments and request evidence",
         "icon": "⚔️"
     },
     "Control": {
-        "name": "👥 纯人类讨论",
-        "description": "无AI干预，进行自由讨论",
+        "name": "👥 Human-Only Discussion",
+        "description": "No AI intervention, free discussion",
         "icon": "👥"
     }
 }
 
 def stream_ai_response(ai_reply, placeholder_container):
-    """流式显示 AI 回复"""
+    """Stream AI response"""
     
-    # 检查 ai_reply 是否为空
+    # Check if ai_reply is empty
     if not ai_reply:
         placeholder_container.markdown("""
         <div class="ai-bubble">
             <div class="bubble-header">
                 <span class="speaker-name">🤖 AI Assistant</span>
-                <span class="timestamp">❌ 错误</span>
+                <span class="timestamp">❌ Error</span>
             </div>
-            <div class="message-content">AI 服务暂时无法响应，请稍后重试</div>
+            <div class="message-content">AI service temporarily unavailable, please try again later</div>
         </div>
         """, unsafe_allow_html=True)
         return
@@ -401,13 +399,14 @@ def stream_ai_response(ai_reply, placeholder_container):
         <div class="message-content">{displayed_text}</div>
     </div>
     """, unsafe_allow_html=True)
-# ========== 登录页面 ==========
+
+# ========== Login Page ==========
 if not st.session_state.session_started:
     st.markdown("""
     <div class="welcome-container">
         <div class="welcome-header">
             <h1>📱 Dialectical AI Partner</h1>
-            <p>批判性思维与协作学习平台</p>
+            <p>Critical Thinking & Collaborative Learning Platform</p>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -415,52 +414,52 @@ if not st.session_state.session_started:
     st.divider()
     
     st.markdown("""
-    ## 🎓 研究项目介绍
+    ## 🎓 Research Project Introduction
     
-    本研究探索**生成式AI作为辩证合作伙伴**如何促进学生的批判性思维发展。
+    This research explores how **generative AI as a dialectical partner** promotes students' critical thinking development.
     
-    ### 📋 你将体验：
-    - **深度讨论**：围绕自定义主题进行讨论
-    - **👥 小组协作**：多名成员进入同一小组，共同讨论
-    - **🤖 AI辅助**：获得不同方式的讨论支持
-    - **📊 实时分析**：系统自动分析批判性思维指标
+    ### 📋 What You'll Experience:
+    - **Deep Discussion**: Discuss around self-defined topics
+    - **👥 Team Collaboration**: Multiple members join the same group to discuss together
+    - **🤖 AI Assistance**: Receive discussion support in different ways
+    - **📊 Real-time Analysis**: System automatically analyzes critical thinking indicators
     
-    ### 💡 加入小组说明
-    **重要：** 与其他成员填写**相同的「小组名称」和「讨论主题」**即可进入同一讨论界面！
+    ### 💡 How to Join a Group
+    **Important:** Join the same discussion with other group members by filling in the **same "Group Name" and "Discussion Topic"**!
     
-    **示例：**
-    - 小组名称：`小组1`
-    - 讨论主题：`人工智能是否应该被允许参与中小学教育？`
+    **Example:**
+    - Group Name: `Group1`
+    - Discussion Topic: `Should AI be allowed to participate in K-12 education?`
     
-    只要两个人填的完全一样，就会自动同步到一个界面！
+    If two people fill in exactly the same information, they'll automatically sync to one interface!
     """)
     
     st.divider()
     
-    st.markdown("## 🎯 讨论设置")
+    st.markdown("## 🎯 Discussion Setup")
     
     col1, col2 = st.columns([0.5, 0.5])
     
     with col1:
-        st.markdown("### 👤 基本信息")
+        st.markdown("### 👤 Basic Information")
         user_name = st.text_input(
-            "你的名字/昵称",
-            placeholder="输入你的名字",
+            "Your Name/Nickname",
+            placeholder="Enter your name",
             max_chars=20,
             key="login_username"
         )
         
         team_name = st.text_input(
-            "🏢 小组名称（与同组成员保持一致！）",
-            placeholder="如：小组1、Team A",
+            "🏢 Group Name (Must be the same as group members!)",
+            placeholder="e.g.: Group1, Team A",
             max_chars=30,
             key="login_team"
         )
     
     with col2:
-        st.markdown("### 🤖 AI 模式选择")
+        st.markdown("### 🤖 AI Mode Selection")
         mode_select = st.selectbox(
-            "选择 AI 讨论模式",
+            "Select AI Discussion Mode",
             list(MODE_OPTIONS.keys()),
             format_func=lambda x: MODE_OPTIONS[x]["name"],
             key="login_mode"
@@ -468,12 +467,12 @@ if not st.session_state.session_started:
     
     st.divider()
     
-    st.markdown("### 📌 讨论主题")
-    st.info("💡 请输入要讨论的主题。**同组成员必须填入相同的主题**才能进入同一讨论")
+    st.markdown("### 📌 Discussion Topic")
+    st.info("💡 Enter the topic you want to discuss. **Group members must enter the same topic** to join the same discussion")
     
     topic = st.text_area(
-        "讨论主题",
-        placeholder="例如：企业应该采用远程工作制度吗？",
+        "Discussion Topic",
+        placeholder="e.g.: Should companies adopt remote work policies?",
         height=100,
         key="login_topic"
     )
@@ -492,19 +491,19 @@ if not st.session_state.session_started:
     col1, col2, col3 = st.columns([0.3, 0.4, 0.3])
     
     with col2:
-        consent = st.checkbox("✅ 我已阅读并同意参与本研究")
+        consent = st.checkbox("✅ I have read and agree to participate in this research")
         
-        if st.button("🚀 进入讨论", use_container_width=True):
+        if st.button("🚀 Enter Discussion", use_container_width=True):
             if not user_name.strip():
-                st.error("❌ 请输入你的名字")
+                st.error("❌ Please enter your name")
             elif not team_name.strip():
-                st.error("❌ 请输入小组名称")
+                st.error("❌ Please enter group name")
             elif not topic.strip():
-                st.error("❌ 请输入讨论主题")
+                st.error("❌ Please enter discussion topic")
             elif not consent:
-                st.error("❌ 请同意参与本研究")
+                st.error("❌ Please agree to participate in this research")
             else:
-                # 创建或获取会话
+                # Create or get session
                 session_id = get_or_create_session(
                     team_name=team_name.strip(),
                     topic=topic.strip(),
@@ -520,22 +519,22 @@ if not st.session_state.session_started:
                 st.session_state.session_started = True
                 st.session_state.session_start_time = datetime.now()
                 
-                st.success(f"✅ 成功进入讨论！")
+                st.success(f"✅ Successfully entered discussion!")
                 time.sleep(1)
                 st.rerun()
 
-# ========== 讨论页面 ==========
+# ========== Discussion Page ==========
 else:
     session_info = get_session_info(st.session_state.session_id)
     
     if not session_info:
-        st.error("❌ 会话信息丢失，请重新登录")
-        if st.button("返回登录"):
+        st.error("❌ Session information lost, please re-login")
+        if st.button("Return to Login"):
             st.session_state.session_started = False
             st.rerun()
     else:
-        topic = session_info.get("topic", "讨论主题")
-        team_name = session_info.get("team_name", "小组")
+        topic = session_info.get("topic", "Discussion Topic")
+        team_name = session_info.get("team_name", "Group")
         mode = session_info.get("mode", "Control")
         mode_info = MODE_OPTIONS.get(mode, {})
         
@@ -544,16 +543,16 @@ else:
         
         current_history = get_history(st.session_state.session_id, limit=500)
         
-        # 左侧栏
+        # Sidebar
         with st.sidebar:
             st.title("📱 Dialectical AI")
             
-            st.markdown("### 👥 会话信息")
+            st.markdown("### 👥 Session Information")
             st.markdown(f"""
             <div class="team-info-card">
-                <strong>🏢 小组名称：</strong> {team_name}<br>
-                <strong>👤 你的名字：</strong> {st.session_state.user_name}<br>
-                <strong>🤖 AI 模式：</strong> {mode_info.get('name', '未知')}<br>
+                <strong>🏢 Group Name:</strong> {team_name}<br>
+                <strong>👤 Your Name:</strong> {st.session_state.user_name}<br>
+                <strong>🤖 AI Mode:</strong> {mode_info.get('name', 'Unknown')}<br>
             </div>
             """, unsafe_allow_html=True)
             
@@ -569,15 +568,15 @@ else:
             st.markdown(f"""
             <div class="session-panel">
                 <div class="session-item">
-                    <span>💬 消息数：</span>
+                    <span>💬 Messages:</span>
                     <strong>{len(current_history)}</strong>
                 </div>
                 <div class="session-item">
-                    <span>👥 小组成员：</span>
+                    <span>👥 Group Members:</span>
                     <strong>{len(current_participants)}</strong>
                 </div>
                 <div class="session-item">
-                    <span>⏱️ 剩余时间：</span>
+                    <span>⏱️ Time Remaining:</span>
                     <span class="timer">{minutes:02d}:{seconds:02d}</span>
                 </div>
             </div>
@@ -585,21 +584,21 @@ else:
             
             st.divider()
             
-            st.markdown("**👥 小组成员在线**")
+            st.markdown("**👥 Active Group Members**")
             if current_participants:
                 for member in current_participants:
                     if member == st.session_state.user_name:
-                        st.caption(f"✓ 🟢 {member} (你)")
+                        st.caption(f"✓ 🟢 {member} (you)")
                     else:
                         st.caption(f"● 🔵 {member}")
             else:
-                st.caption("暂无在线成员")
+                st.caption("No active members")
             
             st.divider()
             
             st.markdown(f"""
             <div class="topic-card">
-                <strong>📌 讨论主题：</strong><br><br>
+                <strong>📌 Discussion Topic:</strong><br><br>
                 {topic}
             </div>
             """, unsafe_allow_html=True)
@@ -608,48 +607,48 @@ else:
             
             st.markdown(f"""
             <div class="mode-card">
-                <strong>{mode_info.get('name', '未知模式')}</strong><br><br>
+                <strong>{mode_info.get('name', 'Unknown Mode')}</strong><br><br>
                 {mode_info.get('description', '')}
             </div>
             """, unsafe_allow_html=True)
             
             st.divider()
             
-            if st.button("📥 导出讨论记录", use_container_width=True):
+            if st.button("📥 Export Discussion Record", use_container_width=True):
                 history = get_history(st.session_state.session_id, limit=1000)
                 if history:
                     buffer = io.StringIO()
                     writer = csv.writer(buffer)
-                    writer.writerow(["用户", "角色", "消息", "时间"])
+                    writer.writerow(["User", "Role", "Message", "Time"])
                     for h in history:
                         writer.writerow([h["user"], h["role"], h["message"], h["timestamp"]])
                     st.download_button(
-                        "📥 下载 CSV",
+                        "📥 Download CSV",
                         buffer.getvalue(),
-                        f"讨论记录_{team_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        f"discussion_record_{team_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                         "text/csv"
                     )
         
-        # ===== 主区域 =====
-        st.markdown(f"## 💬 {team_name} 的讨论")
+        # ===== Main Area =====
+        st.markdown(f"## 💬 {team_name} Discussion")
         
-        members_str = ", ".join(current_participants) if current_participants else "暂无成员"
-        st.markdown(f"**👥 参与成员：** {members_str}")
-        st.markdown(f"**📌 主题：** {topic}")
+        members_str = ", ".join(current_participants) if current_participants else "No members"
+        st.markdown(f"**👥 Participants:** {members_str}")
+        st.markdown(f"**📌 Topic:** {topic}")
         
         st.divider()
         
         if mode != "Control":
             st.markdown("""
             <div class="ai-hint">
-                💡 <strong>提示：</strong>在消息中使用 <code>@AI</code> 来艾特 AI 获得帮助。
+                💡 <strong>Tip:</strong> Use <code>@AI</code> in your message to mention AI for help.
             </div>
             """, unsafe_allow_html=True)
         
         progress = min(len(current_history) / 40, 1.0)
-        st.progress(progress, f"📊 {len(current_history)} 条消息")
+        st.progress(progress, f"📊 {len(current_history)} messages")
         
-        st.markdown("### 💬 讨论记录")
+        st.markdown("### 💬 Discussion History")
         
         history = get_history(st.session_state.session_id, limit=500)
         
@@ -686,38 +685,38 @@ else:
                         st.markdown(f"""
                         <div class="student-bubble" style="{'border: 2px solid #ff9800;' if has_ai_mention else ''}">
                             <div class="bubble-header">
-                                <span class="speaker-name">👤 {user} {'(你)' if is_self else ''} {('🔔' if has_ai_mention else '')}</span>
+                                <span class="speaker-name">👤 {user} {'(you)' if is_self else ''} {('🔔' if has_ai_mention else '')}</span>
                                 <span class="timestamp">{time_str}</span>
                             </div>
                             <div class="message-content">{content}</div>
                         </div>
                         """, unsafe_allow_html=True)
         else:
-            st.info("💭 开始讨论！")
+            st.info("💭 Start discussing!")
         
         st.divider()
         
-        st.markdown("### ✏️ 你的消息")
+        st.markdown("### ✏️ Your Message")
         
         col1, col2, col3 = st.columns([0.72, 0.14, 0.14])
         
         with col1:
             user_input = st.text_area(
                 "",
-                placeholder="分享你的想法... (使用 @AI 艾特 AI)",
+                placeholder="Share your thoughts... (use @AI to mention AI)",
                 height=80,
                 label_visibility="collapsed"
             )
         
         with col2:
             st.write("")
-            send_btn = st.button("📤 发送", use_container_width=True)
+            send_btn = st.button("📤 Send", use_container_width=True)
         
         with col3:
             st.write("")
-            clear_btn = st.button("🗑️ 清空", use_container_width=True)
+            clear_btn = st.button("🗑️ Clear", use_container_width=True)
         
-               # ===== 处理发送 =====
+        # ===== Handle Send =====
         if send_btn:
             if user_input.strip():
                 save_message(
@@ -733,7 +732,7 @@ else:
                 if ai_triggered and mode != "Control":
                     conversation_history = get_history(st.session_state.session_id, limit=20)
                     
-                    with st.spinner("🤖 AI 正在思考中..."):
+                    with st.spinner("🤖 AI is thinking..."):
                         try:
                             ai_reply = generate_response(
                                 mode,
@@ -744,23 +743,23 @@ else:
                             )
                             
                             if ai_reply:
-                                # 保存消息
+                                # Save message
                                 save_message(
                                     st.session_state.session_id, 
                                     "AI", 
                                     "assistant", 
                                     ai_reply
-                            )
+                                )
                                 
-                                # 显示回复
+                                # Display reply
                                 ai_placeholder = st.empty()
                                 stream_ai_response(ai_reply, ai_placeholder)
                             else:
-                                st.error("❌ AI 返回空结果")
+                                st.error("❌ AI returned empty result")
                         
                         except Exception as e:
-                            st.error(f"❌ 调用 AI 时出错: {str(e)}")
-                            print(f"错误: {e}")
+                            st.error(f"❌ Error calling AI: {str(e)}")
+                            print(f"Error: {e}")
                 
                 time.sleep(0.3)
                 st.rerun()
@@ -769,33 +768,30 @@ else:
             st.rerun()
             st.session_state.current_arg_map = None
 
-
-   # --- 只有在进入讨论后，才显示图谱 (第480行) ---
-if "session_id" in st.session_state and st.session_state.session_id:
+    # --- Argumentation Map (displayed after entering discussion) ---
+    if "session_id" in st.session_state and st.session_state.session_id:
         st.divider()
-        st.subheader("🕸️ 实时论证图谱 (Argumentation Map)")
+        st.subheader("🕸️ Real-time Argument Map")
 
-        # 按钮逻辑：确保内部变量与你的 JSON 存储逻辑一致
-        if st.button("🔍 更新论证分析", key="update_map_final", use_container_width=True):
+        if st.button("🔍 Update Argument Analysis", key="update_map_final", use_container_width=True):
             from ai_agent import generate_argument_map
             
-            # 从你定义的 load_all_sessions 获取消息
+            # Get messages from JSON storage
             all_data = load_all_sessions()
             current_sess = all_data.get(st.session_state.session_id, {})
             messages = current_sess.get("messages", [])
             
             if len(messages) > 1:
-                with st.spinner("AI 正在深度解析逻辑..."):
-                    # 这里的 topic 对应你登录时存入的字段
-                    topic = st.session_state.get('topic', '当前讨论')
+                with st.spinner("AI is analyzing the logic in depth..."):
+                    topic = st.session_state.get('topic', 'Current Discussion')
                     map_result = generate_argument_map(messages, topic)
                     st.session_state.current_arg_map = map_result
                     st.rerun()
             else:
-                st.warning("⚠️ 消息太少，AI 尚无法分析。请先多聊几句！")
+                st.warning("⚠️ Not enough messages yet. AI cannot analyze yet. Please chat more!")
 
-        # 显示区域
+        # Display area
         if "current_arg_map" in st.session_state and st.session_state.current_arg_map:
             with st.container(border=True):
                 st.markdown(st.session_state.current_arg_map)
-                st.caption("注：图谱反映了目前的论证结构。")
+                st.caption("Note: The map reflects the current argumentation structure.")
