@@ -775,27 +775,36 @@ if "session_id" in st.session_state and st.session_state.session_id:
     st.divider()
     st.subheader("🕸️ Real-time Argument Map")
 
-    if st.button("🔍 Update Argument Analysis", key="update_map_final", use_container_width=True):
-        # Get messages from JSON storage
-        all_data = load_all_sessions()
-        current_sess = all_data.get(st.session_state.session_id, {})
-        messages = current_sess.get("messages", [])  # ← 确保这行存在
-        
-        if len(messages) > 1:
-            with st.spinner("AI is analyzing the logic in depth..."):
-                topic = session_info.get("topic", 'Current Discussion') if session_info else 'Current Discussion'
-                
-                # 调用函数进行分析
-                map_result = generate_argument_map(messages, topic)
-                st.session_state.current_arg_map = map_result
-                
-                st.success("✅ Analysis complete")
-                st.rerun()
-        else:
-            st.warning("⚠️ Not enough messages yet. AI cannot analyze yet. Please chat more!")
+    col1, col2 = st.columns([0.7, 0.3])
+    
+    with col1:
+        st.info("💡 Click 'Update Argument Analysis' to generate a structured analysis of the discussion")
+    
+    with col2:
+        if st.button("🔍 Update Analysis", key="update_map_final", use_container_width=True):
+            # Get messages from JSON storage
+            all_data = load_all_sessions()
+            current_sess = all_data.get(st.session_state.session_id, {})
+            messages = current_sess.get("messages", [])
+            
+            if len(messages) > 1:
+                with st.spinner("🤖 AI is analyzing the logic in depth..."):
+                    topic = session_info.get("topic", 'Current Discussion') if session_info else 'Current Discussion'
+                    
+                    # ✅ 调用改进的分析函数 - 现在支持所有模式
+                    map_result = generate_argument_map(messages, topic)
+                    st.session_state.current_arg_map = map_result
+                    
+                    st.success("✅ Analysis complete!")
+            else:
+                st.warning("⚠️ Need at least 2 messages to analyze. Please discuss more!")
 
-    # Display area
+    # Display area with better formatting
     if "current_arg_map" in st.session_state and st.session_state.current_arg_map:
+        st.markdown("---")
         with st.container(border=True):
+            # Display as markdown with proper formatting
             st.markdown(st.session_state.current_arg_map)
-            st.caption("Note: The map reflects the current argumentation structure.")
+            st.caption("📌 Note: The map reflects the current argumentation structure.")
+    else:
+        st.info("📊 The argument analysis will appear here after you click 'Update Analysis'")

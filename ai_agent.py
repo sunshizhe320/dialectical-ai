@@ -1,6 +1,7 @@
 """
-ai_agent.py (Improved Version)
-AI Response Generation with Fixed API Calls for All Modes
+ai_agent.py
+AI Response Generation Module - Kimi (Moonshot) API
+Full English Version with Bug Fixes & Unified API Calls
 """
 import os
 import re
@@ -11,6 +12,7 @@ import requests
 
 load_dotenv()
 
+# Get API Key - Priority from Streamlit Secrets
 MOONSHOT_KEY = None
 
 try:
@@ -39,7 +41,8 @@ DEBUG_MODE = True
 
 def _call_kimi_api(system_prompt, user_message, max_tokens=500):
     """
-    ✅ 统一的API调用函数 - 所有模式都使用这个
+    ✅ Unified API Call Function - All modes use this
+    Fixes Problem #1: Consistent API calls across all modes
     """
     if not MOONSHOT_KEY:
         error_msg = "❌ API Key not configured"
@@ -50,6 +53,8 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
     try:
         if DEBUG_MODE:
             print(f"[🔄 Calling Kimi API...]")
+            print(f"  System Prompt: {system_prompt[:80]}...")
+            print(f"  User Message: {user_message[:80]}...")
         
         url = "https://api.moonshot.ai/v1/chat/completions"
         
@@ -87,20 +92,27 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
                 if content:
                     if DEBUG_MODE:
                         print(f"  ✅ Success! Response length: {len(content)} characters")
+                        print(f"{'='*80}\n")
                     return content
         
         if DEBUG_MODE:
             print(f"  ❌ API Error: {response.status_code}")
+            print(f"  Response: {response.text[:200]}")
         return None
     
     except Exception as e:
         if DEBUG_MODE:
             print(f"  ❌ Exception: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
         return None
 
 
 def generate_response(mode, user_message, group_id="", user="", conversation_history=None, custom_prompt=None):
-    """Generate AI response based on the selected mode"""
+    """
+    ✅ Generate AI response based on the selected mode
+    Fix: Now uses unified _call_kimi_api for all modes
+    """
     
     if DEBUG_MODE:
         print(f"\n{'='*80}")
@@ -108,13 +120,20 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
         print(f"  mode: {mode}")
         print(f"  user: {user}")
         print(f"  message: {user_message[:50]}...")
+        print(f"  MOONSHOT_KEY available: {bool(MOONSHOT_KEY)}")
     
     if mode == "Control":
         return "(This is the control group - no AI intervention)"
     
+    if not MOONSHOT_KEY:
+        error_msg = "❌ API Key not configured"
+        if DEBUG_MODE:
+            print(f"[❌ Error] {error_msg}")
+        return _get_fallback(mode)
+    
     system_prompt = _get_system_prompt(mode)
     
-    # ✅ 统一调用API - 不再有重复代码
+    # ✅ Unified API call - works for all modes
     response = _call_kimi_api(system_prompt, user_message, max_tokens=300)
     
     if response:
@@ -185,13 +204,18 @@ def _get_fallback(mode):
 
 def generate_argument_map(messages, topic):
     """
-    ✅ 改进版本：使用结构化提示生成规范的论证分析表格
-    - 清晰的表格格式
-    - 论证共识部分
-    - 核心分歧部分
-    - 后续讨论建议
+    ✅ Fixes Problem #2: Generate structured argumentation analysis table
+    References the manuscript format from the user's documentation
+    
+    Output includes:
+    1. Core Conclusion
+    2. Structured Argument Table (参与者 | 立场 | 核心观点 | 支撑论据)
+    3. Discussion Consensus (讨论共识)
+    4. Core Disagreement (核心分歧)
+    5. Suggestions for Deeper Discussion (后续讨论建议)
     """
-    # 整理对话历史
+    
+    # Organize conversation history
     history_text = ""
     for m in messages:
         user_name = m.get('user', 'Unknown')
@@ -199,53 +223,66 @@ def generate_argument_map(messages, topic):
         if content:
             history_text += f"{user_name}: {content}\n"
     
-    # ✅ 改进的英文提示 - 结构更清晰
-    prompt = f"""
-You are an expert in argumentation analysis and critical thinking.
+    # ✅ Improved prompt - structured format with clear requirements
+    prompt = f"""You are an expert in argumentation analysis and critical thinking.
 
 TASK: Analyze the following discussion about: "{topic}"
 
-OUTPUT FORMAT (MUST follow exactly):
+OUTPUT FORMAT (Use markdown, must include all sections):
 
 ## 🎯 Core Conclusion
 [One sentence summary of the main discussion outcome]
 
 ## 📊 Structured Argument Table
-| Participant | Stance | Core Argument | Supporting Evidence |
+| Participant | Stance (Support/Oppose/Neutral) | Core Argument | Supporting Evidence |
 |---|---|---|---|
-| [Name] | [Support/Oppose/Neutral] | [Main claim in 1 sentence] | [Key reasons/examples] |
+| [Name] | [Stance] | [Main claim in 1 sentence] | [Key reasons/examples] |
 
-(Create one row for each distinct participant position)
+**Instructions for table:**
+- Create one row for each distinct participant or position
+- Stance column: 支持 (Support) / 反对 (Oppose) / 中立 (Neutral)
+- Core Argument: The main position in 1 sentence
+- Supporting Evidence: Key reasons, examples, or evidence cited
 
 ## 🤝 Discussion Consensus
-List 2-3 points that both sides agree on or acknowledge.
+List 2-3 points that both sides agree on or acknowledge:
+- [Consensus point 1]
+- [Consensus point 2]
+- [Consensus point 3 if applicable]
 
-## ⚔️ Core Disagreement
-List 2-3 main points where the participants fundamentally disagree.
+## ⚔️ Core Disagreement  
+List 2-3 main points where participants fundamentally disagree:
+- [Disagreement point 1]
+- [Disagreement point 2]
+- [Disagreement point 3 if applicable]
 
 ## 💭 Suggestions for Deeper Discussion
-1. [Specific question exploring tension between positions]
+1. [Specific question exploring tensions between positions]
 2. [Specific question about evidence or assumptions]
-3. [Specific question about long-term implications]
+3. [Specific question about long-term implications or practical applications]
 
 ---
+
 Discussion History:
 {history_text}
 
-Please provide your analysis in clear, structured English with markdown formatting.
+Please provide analysis in clear, structured markdown format. Be specific with participant names and their exact arguments.
 """
     
-    # ✅ 用改进的API调用 - 允许更长的响应
+    # ✅ Call API with higher token limit for longer analysis
     response = _call_kimi_api(
-        system_prompt="You are an expert argumentation analyst. Provide structured, markdown-formatted analysis.",
+        system_prompt="You are an expert argumentation analyst. Provide structured, markdown-formatted analysis with clear sections and tables.",
         user_message=prompt,
-        max_tokens=800  # 允许更长的分析
+        max_tokens=1000  # Allow longer response for complete analysis
     )
     
     if response:
+        if DEBUG_MODE:
+            print(f"\n[✅ Argument map generated successfully]")
+            print(f"  Length: {len(response)} characters")
         return response
     else:
-        return "⚠️ Unable to generate argument map. Please try again."
+        return "⚠️ Unable to generate argument map at this time. Please try again later or provide more discussion context."
 
 
 # End of file
