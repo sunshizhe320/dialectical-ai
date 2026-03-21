@@ -306,18 +306,21 @@ def generate_argument_map(messages, topic):
     """
     分析对话历史，提取结构化的论证图谱
     """
-    history_text = "\n".join([f"{m['user']}: {m['message']}" for m in messages if m['role'] != 'system'])
+    # 1. 整理对话文本
+    history_text = "\n".join([f"{m.get('user', '未知')}: {m.get('message', '')}" for m in messages])
     
+    # 2. 构建给 AI 的指令
     prompt = f"""
     你是一名教育专家。请分析关于“{topic}”的讨论记录，并提取结构化论证。
     输出要求：
-    1. 为每个参与者提取：立场（支持/反对/中立）、核心观点、支撑论据、互动逻辑。
-    2. 给出当前讨论的阶段性共识。
-    3. 严格使用 Markdown 表格和引用块格式。
+    - 使用 Markdown 表格列出：参与者、立场、核心观点、支撑论据。
+    - 总结当前的讨论共识。
+    - 给出 2 条后续讨论的深度建议。
 
     讨论记录：
     {history_text}
     """
     
-    # 调用你现有的 get_kimi_response
-    return get_kimi_response([{"role": "user", "content": prompt}])
+    # 【核心修正】：调用你文件里真实存在的函数 generate_response
+    # 第一个参数 mode 传 "Scaffolded"（或者随便一个非 Control 的字符串）
+    return generate_response("Scaffolded", prompt)
