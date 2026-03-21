@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 import time
 import io
 import csv
@@ -9,7 +10,7 @@ from dotenv import load_dotenv
 
 from ai_agent import generate_response
 from discourse_analysis import analyzer
-from streamlit_autorefresh import st_autorefresh
+
 
 
 load_dotenv()
