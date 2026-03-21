@@ -50,6 +50,7 @@ def _log(message):
 def _call_kimi_api(system_prompt, user_message, max_tokens=500):
     """
     Unified API Call with Complete Error Logging
+    ✅ Fixed: Using .cn domain instead of .ai
     """
     _log(f"\n[🔄 _call_kimi_api START]")
     _log(f"  MOONSHOT_KEY: {bool(MOONSHOT_KEY)}")
@@ -64,7 +65,7 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
         _log(f"  System Prompt Length: {len(system_prompt)}")
         _log(f"  User Message Length: {len(user_message)}")
         
-        url = "https://api.moonshot.ai/v1/chat/completions"
+        url = "https://api.moonshot.cn/v1/chat/completions"  # ✅ 改成 .cn
         
         headers = {
             "Content-Type": "application/json",
@@ -84,7 +85,6 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
         _log(f"[📤 Sending POST request to {url}]")
         _log(f"  Headers: {list(headers.keys())}")
         
-        # 增加超时时间到 60 秒
         response = requests.post(
             url,
             json=payload,
@@ -96,7 +96,6 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
         _log(f"  Status Code: {response.status_code}")
         _log(f"  Response Length: {len(response.text)}")
         
-        # 打印完整的响应文本用于调试
         _log(f"  Response Text: {response.text[:500]}")
         
         if response.status_code == 200:
@@ -155,7 +154,6 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
         _log(traceback.format_exc())
         _log(f"[🔄 _call_kimi_api END - EXCEPTION]")
         return None
-
 
 def generate_response(mode, user_message, group_id="", user="", conversation_history=None, custom_prompt=None):
     """Generate AI response based on mode"""
