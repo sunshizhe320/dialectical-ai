@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
-from ai_agent import generate_response
-# from discourse_analysis import analyzer
+# from ai_agent import generate_response
+from discourse_analysis import analyzer
 
 load_dotenv()
 
