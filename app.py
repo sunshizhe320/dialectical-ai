@@ -737,6 +737,7 @@ else:
                     
                     with st.spinner("🤖 AI is thinking..."):
                         try:
+                            print(f"\n[APP] Calling generate_response with mode={mode}", flush=True)
                             ai_reply = generate_response(
                                 mode,
                                 user_input,

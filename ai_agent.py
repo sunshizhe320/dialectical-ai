@@ -1,60 +1,68 @@
 """
-ai_agent.py
-AI Response Generation Module - Kimi (Moonshot) API
-Full English Version with Bug Fixes & Unified API Calls
+ai_agent.py - Complete Fix with Full Logging
+API Response Generation with Comprehensive Error Logging
 """
 import os
-import re
+import sys
 import random
+import json
+import time
 from dotenv import load_dotenv
 import streamlit as st
 import requests
 
 load_dotenv()
 
-# Get API Key - Priority from Streamlit Secrets
+# 强制刷新输出缓冲
+sys.stdout = sys.stderr
+
 MOONSHOT_KEY = None
 
 try:
     if hasattr(st, 'secrets') and st.secrets:
         MOONSHOT_KEY = st.secrets.get("MOONSHOT_API_KEY")
         if MOONSHOT_KEY:
-            print(f"✅ MOONSHOT_API_KEY loaded from Streamlit Secrets")
+            print(f"✅ MOONSHOT_API_KEY loaded from Streamlit Secrets", flush=True)
 except Exception as e:
-    print(f"⚠️ Unable to read from Secrets: {e}")
+    print(f"⚠️ Unable to read from Secrets: {e}", flush=True)
 
 if not MOONSHOT_KEY:
     MOONSHOT_KEY = os.getenv("MOONSHOT_API_KEY")
     if MOONSHOT_KEY:
-        print(f"✅ MOONSHOT_API_KEY loaded from Environment Variables")
+        print(f"✅ MOONSHOT_API_KEY loaded from Environment Variables", flush=True)
 
-print(f"\n{'='*80}")
-print(f"[🔧 AI Agent Initialization]")
+print(f"\n{'='*80}", flush=True)
+print(f"[🔧 AI Agent Initialization]", flush=True)
 if MOONSHOT_KEY:
-    print(f"✅ MOONSHOT_API_KEY is SET (Length: {len(MOONSHOT_KEY)})")
+    print(f"✅ MOONSHOT_API_KEY is SET (Length: {len(MOONSHOT_KEY)})", flush=True)
 else:
-    print(f"❌ MOONSHOT_API_KEY is NOT SET!")
-print(f"{'='*80}\n")
+    print(f"❌ MOONSHOT_API_KEY is NOT SET!", flush=True)
+print(f"{'='*80}\n", flush=True)
 
 DEBUG_MODE = True
 
 
+def _log(message):
+    """统一日志函数，确保输出到控制台"""
+    print(message, flush=True)
+
+
 def _call_kimi_api(system_prompt, user_message, max_tokens=500):
     """
-    ✅ Unified API Call Function - All modes use this
-    Fixes Problem #1: Consistent API calls across all modes
+    Unified API Call with Complete Error Logging
     """
+    _log(f"\n[🔄 _call_kimi_api START]")
+    _log(f"  MOONSHOT_KEY: {bool(MOONSHOT_KEY)}")
+    _log(f"  max_tokens: {max_tokens}")
+    
     if not MOONSHOT_KEY:
-        error_msg = "❌ API Key not configured"
-        if DEBUG_MODE:
-            print(f"[❌ Error] {error_msg}")
+        _log(f"❌ MOONSHOT_KEY is None!")
         return None
     
     try:
-        if DEBUG_MODE:
-            print(f"[🔄 Calling Kimi API...]")
-            print(f"  System Prompt: {system_prompt[:80]}...")
-            print(f"  User Message: {user_message[:80]}...")
+        _log(f"[📝 Preparing request]")
+        _log(f"  System Prompt Length: {len(system_prompt)}")
+        _log(f"  User Message Length: {len(user_message)}")
         
         url = "https://api.moonshot.ai/v1/chat/completions"
         
@@ -73,149 +81,165 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
             "max_tokens": max_tokens
         }
         
+        _log(f"[📤 Sending POST request to {url}]")
+        _log(f"  Headers: {list(headers.keys())}")
+        
+        # 增加超时时间到 60 秒
         response = requests.post(
             url,
             json=payload,
             headers=headers,
-            timeout=30
+            timeout=60
         )
         
-        if DEBUG_MODE:
-            print(f"  Status Code: {response.status_code}")
+        _log(f"[📥 Response received]")
+        _log(f"  Status Code: {response.status_code}")
+        _log(f"  Response Length: {len(response.text)}")
+        
+        # 打印完整的响应文本用于调试
+        _log(f"  Response Text: {response.text[:500]}")
         
         if response.status_code == 200:
-            result = response.json()
-            
-            if "choices" in result and len(result["choices"]) > 0:
-                content = result["choices"][0].get("message", {}).get("content", "").strip()
+            try:
+                result = response.json()
+                _log(f"  Response JSON parsed successfully")
+                _log(f"  Response Keys: {list(result.keys())}")
                 
-                if content:
-                    if DEBUG_MODE:
-                        print(f"  ✅ Success! Response length: {len(content)} characters")
-                        print(f"{'='*80}\n")
-                    return content
+                if "choices" in result:
+                    _log(f"  Choices count: {len(result['choices'])}")
+                    
+                    if len(result["choices"]) > 0:
+                        choice = result["choices"][0]
+                        _log(f"  Choice keys: {list(choice.keys())}")
+                        
+                        message = choice.get("message", {})
+                        content = message.get("content", "").strip()
+                        
+                        _log(f"  Content length: {len(content)}")
+                        _log(f"  Content preview: {content[:100]}...")
+                        
+                        if content:
+                            _log(f"✅ API Call Success! Got {len(content)} chars")
+                            _log(f"[🔄 _call_kimi_api END - SUCCESS]")
+                            return content
+                        else:
+                            _log(f"❌ Content is empty")
+                    else:
+                        _log(f"❌ No choices in result")
+                else:
+                    _log(f"❌ No 'choices' key in response")
+                    
+            except json.JSONDecodeError as je:
+                _log(f"❌ JSON Parse Error: {str(je)}")
+                _log(f"  Response text: {response.text[:200]}")
+        else:
+            _log(f"❌ HTTP Error {response.status_code}")
+            _log(f"  Response: {response.text[:300]}")
         
-        if DEBUG_MODE:
-            print(f"  ❌ API Error: {response.status_code}")
-            print(f"  Response: {response.text[:200]}")
+        _log(f"[🔄 _call_kimi_api END - FAILED]")
+        return None
+    
+    except requests.Timeout as te:
+        _log(f"❌ Request Timeout: {str(te)}")
+        _log(f"[🔄 _call_kimi_api END - TIMEOUT]")
+        return None
+    
+    except requests.ConnectionError as ce:
+        _log(f"❌ Connection Error: {str(ce)}")
+        _log(f"[🔄 _call_kimi_api END - CONNECTION ERROR]")
         return None
     
     except Exception as e:
-        if DEBUG_MODE:
-            print(f"  ❌ Exception: {type(e).__name__}: {str(e)}")
-            import traceback
-            traceback.print_exc()
+        _log(f"❌ Unexpected Exception: {type(e).__name__}: {str(e)}")
+        import traceback
+        _log(traceback.format_exc())
+        _log(f"[🔄 _call_kimi_api END - EXCEPTION]")
         return None
 
 
 def generate_response(mode, user_message, group_id="", user="", conversation_history=None, custom_prompt=None):
-    """
-    ✅ Generate AI response based on the selected mode
-    Fix: Now uses unified _call_kimi_api for all modes
-    """
+    """Generate AI response based on mode"""
     
-    if DEBUG_MODE:
-        print(f"\n{'='*80}")
-        print(f"[📝 generate_response called]")
-        print(f"  mode: {mode}")
-        print(f"  user: {user}")
-        print(f"  message: {user_message[:50]}...")
-        print(f"  MOONSHOT_KEY available: {bool(MOONSHOT_KEY)}")
+    _log(f"\n[🎯 generate_response START]")
+    _log(f"  mode: {mode}")
+    _log(f"  user: {user}")
+    _log(f"  message: {user_message[:50]}...")
     
     if mode == "Control":
+        _log(f"  Control mode detected - no AI intervention")
+        _log(f"[🎯 generate_response END]")
         return "(This is the control group - no AI intervention)"
     
     if not MOONSHOT_KEY:
-        error_msg = "❌ API Key not configured"
-        if DEBUG_MODE:
-            print(f"[❌ Error] {error_msg}")
+        _log(f"❌ API Key not configured")
+        _log(f"[🎯 generate_response END - Using Fallback]")
         return _get_fallback(mode)
     
     system_prompt = _get_system_prompt(mode)
     
-    # ✅ Unified API call - works for all modes
+    _log(f"[📞 Calling _call_kimi_api]")
     response = _call_kimi_api(system_prompt, user_message, max_tokens=300)
     
     if response:
+        _log(f"✅ Got API response, returning it")
+        _log(f"[🎯 generate_response END - SUCCESS]")
         return response
     else:
-        return _get_fallback(mode)
+        _log(f"⚠️ API failed, using fallback")
+        fallback = _get_fallback(mode)
+        _log(f"[🎯 generate_response END - Using Fallback]")
+        return fallback
 
 
 def _get_system_prompt(mode):
     """Get system prompt based on mode"""
-    
     if "Scaffolded" in mode:
         return (
             "You are a Socratic tutor with expertise in critical thinking. "
-            "Your role is to: "
-            "1. Ask insightful questions that help students think deeper "
-            "2. Never give direct answers, but guide students to discover themselves "
-            "3. Challenge assumptions and request evidence "
-            "4. Encourage students to think from multiple perspectives. "
-            "Keep your responses concise and thought-provoking."
+            "Your role is to ask insightful questions that help students think deeper. "
+            "Never give direct answers. Challenge assumptions. Keep responses concise."
         )
-    
     elif "Debater" in mode:
         return (
-            "You are an expert critical debater and logical analyst. "
-            "Your role is to: "
-            "1. Identify logical flaws and weaknesses in arguments "
-            "2. Present strong counter-arguments using words like 'However', 'On the contrary', 'I disagree' "
-            "3. Provide concrete examples or alternative explanations "
-            "4. Demand stronger evidence and support "
-            "5. Maintain a respectful and constructive tone. "
-            "Focus on the logic and evidence, not the person."
+            "You are a critical debater. Identify logical flaws in arguments. "
+            "Present counter-arguments. Provide concrete examples. "
+            "Demand stronger evidence. Maintain a respectful tone."
         )
-    
     else:
         return "You are a helpful AI assistant. Answer clearly and directly."
 
 
 def _get_fallback(mode):
-    """Fallback responses in English"""
-    
+    """Fallback responses"""
     if "Scaffolded" in mode:
-        options = [
-            "That's interesting. Could you elaborate on why you think so?",
-            "What do you believe is the underlying cause of this?",
-            "Is there any specific evidence that supports your view?",
+        return random.choice([
+            "Could you elaborate on why you think so?",
+            "What evidence supports your view?",
             "What would happen if the opposite were true?",
-            "What assumptions are you making here?",
-        ]
+        ])
     elif "Debater" in mode:
-        options = [
-            "I understand your point, but let me challenge it from a different angle.",
-            "Have you considered the potential downsides or counterexamples?",
-            "Can you provide more concrete evidence for this argument?",
-            "Does this logic really apply to all possible scenarios?",
-            "I see your reasoning, but I respectfully disagree. Here's why:",
-        ]
-    else:
-        options = [
-            "Please continue.",
-            "That's a point worth considering.",
-            "Could you give a specific example?",
-            "I see. Tell me more about this.",
-        ]
-    
-    return random.choice(options)
+        return random.choice([
+            "Have you considered the downsides?",
+            "Can you provide concrete evidence?",
+            "Does this logic apply to all scenarios?",
+        ])
+    return "Please continue."
 
 
 def generate_argument_map(messages, topic):
     """
-    ✅ Fixes Problem #2: Generate structured argumentation analysis table
-    References the manuscript format from the user's documentation
-    
-    Output includes:
-    1. Core Conclusion
-    2. Structured Argument Table (参与者 | 立场 | 核心观点 | 支撑论据)
-    3. Discussion Consensus (讨论共识)
-    4. Core Disagreement (核心分歧)
-    5. Suggestions for Deeper Discussion (后续讨论建议)
+    Generate structured argumentation analysis
     """
+    _log(f"\n[📊 generate_argument_map START]")
+    _log(f"  Messages: {len(messages)}")
+    _log(f"  Topic: {topic[:50]}...")
     
-    # Organize conversation history
+    if not messages or len(messages) < 2:
+        error_msg = "⚠️ Need at least 2 messages to analyze."
+        _log(f"  {error_msg}")
+        _log(f"[📊 generate_argument_map END - Insufficient data]")
+        return error_msg
+    
     history_text = ""
     for m in messages:
         user_name = m.get('user', 'Unknown')
@@ -223,66 +247,55 @@ def generate_argument_map(messages, topic):
         if content:
             history_text += f"{user_name}: {content}\n"
     
-    # ✅ Improved prompt - structured format with clear requirements
-    prompt = f"""You are an expert in argumentation analysis and critical thinking.
+    _log(f"  History length: {len(history_text)} chars")
+    
+    prompt = f"""Analyze this discussion: "{topic}"
 
-TASK: Analyze the following discussion about: "{topic}"
-
-OUTPUT FORMAT (Use markdown, must include all sections):
+Output in this exact markdown format:
 
 ## 🎯 Core Conclusion
-[One sentence summary of the main discussion outcome]
+[1 sentence summary]
 
-## 📊 Structured Argument Table
-| Participant | Stance (Support/Oppose/Neutral) | Core Argument | Supporting Evidence |
+## 📊 Argument Table
+| Participant | Stance | Core Argument | Evidence |
 |---|---|---|---|
-| [Name] | [Stance] | [Main claim in 1 sentence] | [Key reasons/examples] |
+| Name | Support/Oppose | Claim | Reasons |
 
-**Instructions for table:**
-- Create one row for each distinct participant or position
-- Stance column: 支持 (Support) / 反对 (Oppose) / 中立 (Neutral)
-- Core Argument: The main position in 1 sentence
-- Supporting Evidence: Key reasons, examples, or evidence cited
+## 🤝 Consensus Points
+- Point 1
+- Point 2
 
-## 🤝 Discussion Consensus
-List 2-3 points that both sides agree on or acknowledge:
-- [Consensus point 1]
-- [Consensus point 2]
-- [Consensus point 3 if applicable]
+## ⚔️ Core Disagreements
+- Point 1
+- Point 2
 
-## ⚔️ Core Disagreement  
-List 2-3 main points where participants fundamentally disagree:
-- [Disagreement point 1]
-- [Disagreement point 2]
-- [Disagreement point 3 if applicable]
-
-## 💭 Suggestions for Deeper Discussion
-1. [Specific question exploring tensions between positions]
-2. [Specific question about evidence or assumptions]
-3. [Specific question about long-term implications or practical applications]
+## 💭 Deeper Questions
+1. Question 1
+2. Question 2
 
 ---
 
-Discussion History:
+Discussion:
 {history_text}
 
-Please provide analysis in clear, structured markdown format. Be specific with participant names and their exact arguments.
-"""
+Provide analysis in markdown format."""
     
-    # ✅ Call API with higher token limit for longer analysis
+    _log(f"[📞 Calling _call_kimi_api for argument map]")
     response = _call_kimi_api(
-        system_prompt="You are an expert argumentation analyst. Provide structured, markdown-formatted analysis with clear sections and tables.",
+        system_prompt="You are an expert argumentation analyst.",
         user_message=prompt,
-        max_tokens=1000  # Allow longer response for complete analysis
+        max_tokens=1500
     )
     
-    if response:
-        if DEBUG_MODE:
-            print(f"\n[✅ Argument map generated successfully]")
-            print(f"  Length: {len(response)} characters")
+    if response and len(response) > 50:
+        _log(f"✅ Got analysis response: {len(response)} chars")
+        _log(f"[📊 generate_argument_map END - SUCCESS]")
         return response
     else:
-        return "⚠️ Unable to generate argument map at this time. Please try again later or provide more discussion context."
+        error_msg = f"⚠️ Analysis failed. Response: {response[:50] if response else 'None'}"
+        _log(f"  {error_msg}")
+        _log(f"[📊 generate_argument_map END - FAILED]")
+        return error_msg
 
 
 # End of file
