@@ -771,29 +771,31 @@ else:
             st.rerun()
             st.session_state.current_arg_map = None
     # --- Argumentation Map (displayed after entering discussion) ---
-    if "session_id" in st.session_state and st.session_state.session_id:
-        st.divider()
-        st.subheader("🕸️ Real-time Argument Map")
+if "session_id" in st.session_state and st.session_state.session_id:
+    st.divider()
+    st.subheader("🕸️ Real-time Argument Map")
 
-        if st.button("🔍 Update Argument Analysis", key="update_map_final", use_container_width=True):
-            all_data = load_all_sessions()
-            current_sess = all_data.get(st.session_state.session_id, {})
-            messages = current_sess.get("messages", [])
-    
-    if len(messages) > 1:
-        with st.spinner("AI is analyzing the logic in depth..."):
-            topic = session_info.get("topic", 'Current Discussion')
-            # 调用函数进行分析
-            map_result = generate_argument_map(messages, topic)
-            st.session_state.current_arg_map = map_result
-            
-            st.success("✅ Analysis complete")
-            st.rerun()
-    else:
-        st.warning("⚠️ Not enough messages yet. AI cannot analyze yet. Please chat more!")
+    if st.button("🔍 Update Argument Analysis", key="update_map_final", use_container_width=True):
+        # Get messages from JSON storage
+        all_data = load_all_sessions()
+        current_sess = all_data.get(st.session_state.session_id, {})
+        messages = current_sess.get("messages", [])  # ← 确保这行存在
+        
+        if len(messages) > 1:
+            with st.spinner("AI is analyzing the logic in depth..."):
+                topic = session_info.get("topic", 'Current Discussion') if session_info else 'Current Discussion'
+                
+                # 调用函数进行分析
+                map_result = generate_argument_map(messages, topic)
+                st.session_state.current_arg_map = map_result
+                
+                st.success("✅ Analysis complete")
+                st.rerun()
+        else:
+            st.warning("⚠️ Not enough messages yet. AI cannot analyze yet. Please chat more!")
 
-        # Display area
-        if "current_arg_map" in st.session_state and st.session_state.current_arg_map:
-            with st.container(border=True):
-                st.markdown(st.session_state.current_arg_map)
-                st.caption("Note: The map reflects the current argumentation structure.")
+    # Display area
+    if "current_arg_map" in st.session_state and st.session_state.current_arg_map:
+        with st.container(border=True):
+            st.markdown(st.session_state.current_arg_map)
+            st.caption("Note: The map reflects the current argumentation structure.")

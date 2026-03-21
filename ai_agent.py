@@ -79,7 +79,6 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
             print(f"[❌ Error] {error_msg}")
         return error_msg
     
-    # Get system prompt based on mode
     system_prompt = _get_system_prompt(mode)
     
     try:
@@ -88,7 +87,6 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
         if DEBUG_MODE:
             print(f"[🔄 Calling Kimi API...]")
         
-        # 修复：改为 api.moonshot.ai
         url = "https://api.moonshot.ai/v1/chat/completions"
         
         headers = {
@@ -115,6 +113,7 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
         
         if DEBUG_MODE:
             print(f"  Status Code: {response.status_code}")
+            print(f"  Response Text: {response.text[:500]}")  # ← 添加这行看完整响应
         
         if response.status_code == 200:
             result = response.json()
@@ -128,19 +127,25 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
                         print(f"  Response length: {len(content)} characters")
                         print(f"{'='*80}\n")
                     return content
-        
-        if DEBUG_MODE:
-            print(f"  ❌ API Error: {response.status_code}")
-            print(f"  Response: {response.text[:200]}")
-        
-        return _get_fallback(mode)
+                else:
+                    if DEBUG_MODE:
+                        print(f"  ❌ Empty content in response")
+                    return _get_fallback(mode)
+        else:
+            if DEBUG_MODE:
+                print(f"  ❌ API Error: {response.status_code}")
+                print(f"  Response: {response.text[:500]}")
+            return _get_fallback(mode)
     
     except Exception as e:
         if DEBUG_MODE:
             print(f"  ❌ Exception: {type(e).__name__}")
-            print(f"  Message: {str(e)[:100]}")
+            print(f"  Message: {str(e)}")
+            import traceback
+            traceback.print_exc()  # ← 添加完整堆栈跟踪
         
         return _get_fallback(mode)
+    
 
 
 def _get_system_prompt(mode):
