@@ -191,21 +191,26 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
 
 def _get_system_prompt(mode):
     """Get system prompt based on mode"""
+    
+    # 强制英文回复的基础指令
+    FORCE_ENGLISH = "IMPORTANT: You MUST respond ONLY in English, regardless of the language of the user's message. Always use English for your entire response."
+    
     if "Scaffolded" in mode:
         return (
+            f"{FORCE_ENGLISH}\n\n"
             "You are a Socratic tutor with expertise in critical thinking. "
             "Your role is to ask insightful questions that help students think deeper. "
             "Never give direct answers. Challenge assumptions. Keep responses concise."
         )
     elif "Debater" in mode:
         return (
+            f"{FORCE_ENGLISH}\n\n"
             "You are a critical debater. Identify logical flaws in arguments. "
             "Present counter-arguments. Provide concrete examples. "
             "Demand stronger evidence. Maintain a respectful tone."
         )
     else:
-        return "You are a helpful AI assistant. Answer clearly and directly."
-
+        return f"{FORCE_ENGLISH}\n\nYou are a helpful AI assistant. Answer clearly and directly."
 
 def _get_fallback(mode):
     """Fallback responses"""
