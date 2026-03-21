@@ -770,37 +770,37 @@ else:
 
     # --- Argumentation Map (displayed after entering discussion) ---
     if "session_id" in st.session_state and st.session_state.session_id:
-        st.divider()
-        st.subheader("🕸️ Real-time Argument Map")
+            st.divider()
+            st.subheader("🕸️ Real-time Argument Map")
 
-        if st.button("🔍 Update Argument Analysis", key="update_map_final", use_container_width=True):
-            from ai_agent import generate_argument_map
-            
-            # 【核心修正】直接在这里调用全局定义的函数
-            try:
-                # 显式获取最新的 session 数据
-                all_data = load_all_sessions() 
-                current_sess = all_data.get(st.session_state.session_id, {})
-                messages = current_sess.get("messages", [])
+            if st.button("🔍 Update Argument Analysis", key="update_map_final", use_container_width=True):
+                from ai_agent import generate_argument_map
                 
-                if len(messages) > 1:
-                    with st.spinner("AI is analyzing the logic in depth..."):
-                        # 注意：确保这里用的是 login_topic，和你登录时存的一致
-                        topic = st.session_state.get('login_topic', 'Current Discussion')
-                        map_result = generate_argument_map(messages, topic)
-                        st.session_state.current_arg_map = map_result
-                        st.rerun()
-                else:
-                    st.warning("⚠️ Not enough messages yet. Please chat more!")
-            except NameError:
-                # 万一全局找不到，这里做一个备选保护（通常不会发生，但能防止崩掉）
-                st.error("System error: load_all_sessions function is missing. Please refresh the page.")
+                # 【核心修正】直接在这里调用全局定义的函数
+                try:
+                    # 显式获取最新的 session 数据
+                    all_data = load_all_sessions() 
+                    current_sess = all_data.get(st.session_state.session_id, {})
+                    messages = current_sess.get("messages", [])
+                    
+                    if len(messages) > 1:
+                        with st.spinner("AI is analyzing the logic in depth..."):
+                            # 注意：确保这里用的是 login_topic，和你登录时存的一致
+                            topic = st.session_state.get('login_topic', 'Current Discussion')
+                            map_result = generate_argument_map(messages, topic)
+                            st.session_state.current_arg_map = map_result
+                            st.rerun()
+                    else:
+                        st.warning("⚠️ Not enough messages yet. Please chat more!")
+                except NameError:
+                    # 万一全局找不到，这里做一个备选保护（通常不会发生，但能防止崩掉）
+                    st.error("System error: load_all_sessions function is missing. Please refresh the page.")
 
-        # Display area
-        if "current_arg_map" in st.session_state and st.session_state.current_arg_map:
-            with st.container(border=True):
-                st.markdown(st.session_state.current_arg_map)
-                st.caption("Note: The map reflects the current argumentation structure.")
-                if st.button("Clear Map"):
-                    st.session_state.current_arg_map = None
-                    st.rerun()
+            # Display area
+            if "current_arg_map" in st.session_state and st.session_state.current_arg_map:
+                with st.container(border=True):
+                    st.markdown(st.session_state.current_arg_map)
+                    st.caption("Note: The map reflects the current argumentation structure.")
+                    if st.button("Clear Map"):
+                        st.session_state.current_arg_map = None
+                        st.rerun()
