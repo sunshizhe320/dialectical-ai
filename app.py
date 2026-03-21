@@ -770,26 +770,32 @@ else:
             st.session_state.current_arg_map = None
 
 
-    # --- 只有在用户进入讨论后，才显示图谱 ---
+   # --- 只有在进入讨论后，才显示图谱 (第480行) ---
 if "session_id" in st.session_state and st.session_state.session_id:
         st.divider()
         st.subheader("🕸️ 实时论证图谱 (Argumentation Map)")
 
-        if st.button("🔍 更新论证分析", key="update_arg_map_btn", use_container_width=True):
+        # 按钮逻辑：确保内部变量与你的 JSON 存储逻辑一致
+        if st.button("🔍 更新论证分析", key="update_map_final", use_container_width=True):
             from ai_agent import generate_argument_map
-            all_sessions = load_all_sessions()
-            current_session = all_sessions.get(st.session_state.session_id, {})
-            messages = current_session.get("messages", [])
+            
+            # 从你定义的 load_all_sessions 获取消息
+            all_data = load_all_sessions()
+            current_sess = all_data.get(st.session_state.session_id, {})
+            messages = current_sess.get("messages", [])
             
             if len(messages) > 1:
-                with st.spinner("AI 正在解析逻辑..."):
-                    topic = st.session_state.get('login_topic', '当前讨论')
+                with st.spinner("AI 正在深度解析逻辑..."):
+                    # 这里的 topic 对应你登录时存入的字段
+                    topic = st.session_state.get('topic', '当前讨论')
                     map_result = generate_argument_map(messages, topic)
                     st.session_state.current_arg_map = map_result
                     st.rerun()
             else:
-                st.warning("⚠️ 消息太少，AI 尚无法分析论证结构。")
+                st.warning("⚠️ 消息太少，AI 尚无法分析。请先多聊几句！")
 
+        # 显示区域
         if "current_arg_map" in st.session_state and st.session_state.current_arg_map:
             with st.container(border=True):
                 st.markdown(st.session_state.current_arg_map)
+                st.caption("注：图谱反映了目前的论证结构。")
