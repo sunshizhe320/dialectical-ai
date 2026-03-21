@@ -301,3 +301,23 @@ def _get_fallback(mode):
         ]
     
     return random.choice(options)
+
+def generate_argument_map(messages, topic):
+    """
+    分析对话历史，提取结构化的论证图谱
+    """
+    history_text = "\n".join([f"{m['user']}: {m['message']}" for m in messages if m['role'] != 'system'])
+    
+    prompt = f"""
+    你是一名教育专家。请分析关于“{topic}”的讨论记录，并提取结构化论证。
+    输出要求：
+    1. 为每个参与者提取：立场（支持/反对/中立）、核心观点、支撑论据、互动逻辑。
+    2. 给出当前讨论的阶段性共识。
+    3. 严格使用 Markdown 表格和引用块格式。
+
+    讨论记录：
+    {history_text}
+    """
+    
+    # 调用你现有的 get_kimi_response
+    return get_kimi_response([{"role": "user", "content": prompt}])
