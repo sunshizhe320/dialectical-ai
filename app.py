@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 
 from ai_agent import generate_response
 from discourse_analysis import analyzer
+from streamlit_autorefresh import st_autorefresh
+
 
 load_dotenv()
 
@@ -766,25 +768,33 @@ else:
         if clear_btn:
             st.rerun()
             st.session_state.current_arg_map = None
-# --- 只有在用户选择了 Session 并进入讨论后，才显示图谱 ---
+# --- 只有在进入讨论 Session 后才显示图谱 ---
     if "session_id" in st.session_state and st.session_state.session_id:
-        # 注意！下面这些行必须比上面的 if 往右多出 4 个空格
-        st.divider() 
+        st.divider()
         st.subheader("🕸️ 实时论证图谱 (Argumentation Map)")
 
         # 刷新按钮
         if st.button("🔍 更新论证分析", use_container_width=True):
-            from db import get_messages
+            # 注意：这里直接引用你文件里已有的函数
             from ai_agent import generate_argument_map
-            all_messages = get_messages(st.session_state.session_id)
             
-            if len(all_messages) > 1:
-                with st.spinner("AI 正在解析逻辑..."):
-                    map_result = generate_argument_map(all_messages, st.session_state.topic)
+            # 获取当前所有消息
+            current_msgs = get_history(st.session_state.session_id, limit=100)
+            
+            if len(current_msgs) > 1:
+                with st.spinner("AI 正在解析深度逻辑并构建图谱..."):
+                    # 调用 AI 生成
+                    map_result = generate_argument_map(current_msgs, st.session_state.login_topic)
+                    # 【核心修正】：统一使用 current_arg_map 这个变量名
                     st.session_state.current_arg_map = map_result
                     st.rerun()
+            else:
+                st.warning("⚠️ 讨论消息太少（至少需要2条），AI 尚无法分析论证结构。")
 
-        # 显示图谱内容
-        if "current_arg_map" in st.session_state:
+        # 【核心修正】：检查对应的变量名
+        if "current_arg_map" in st.session_state and st.session_state.current_arg_map:
             with st.container(border=True):
                 st.markdown(st.session_state.current_arg_map)
+                st.caption("注：图谱基于当前对话生成。若有新发言，请再次点击更新。")
+        else:
+            st.info("💡 点击上方按钮，AI 将根据当前的对话生成论证图谱。")
