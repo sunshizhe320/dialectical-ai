@@ -59,6 +59,26 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
             print(f"[❌ Error] {error_msg}")
         return error_msg
     
+def generate_response(mode, user_message, group_id="", user="", conversation_history=None, custom_prompt=None):
+    """Generate AI response based on the selected mode"""
+    
+    if DEBUG_MODE:
+        print(f"\n{'='*80}")
+        print(f"[📝 generate_response called]")
+        print(f"  mode: {mode}")
+        print(f"  user: {user}")
+        print(f"  message: {user_message[:50]}...")
+        print(f"  MOONSHOT_KEY available: {bool(MOONSHOT_KEY)}")
+    
+    if mode == "Control":
+        return "(This is the control group - no AI intervention)"
+    
+    if not MOONSHOT_KEY:
+        error_msg = "❌ API Key not configured"
+        if DEBUG_MODE:
+            print(f"[❌ Error] {error_msg}")
+        return error_msg
+    
     # Get system prompt based on mode
     system_prompt = _get_system_prompt(mode)
     
@@ -68,7 +88,8 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
         if DEBUG_MODE:
             print(f"[🔄 Calling Kimi API...]")
         
-        url = "https://api.moonshot.cn/v1/chat/completions"
+        # 修复：改为 api.moonshot.ai
+        url = "https://api.moonshot.ai/v1/chat/completions"
         
         headers = {
             "Content-Type": "application/json",
