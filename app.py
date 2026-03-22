@@ -790,28 +790,36 @@ else:
             # 只有在有足够数据时才显示
             if len(messages) >= 3 and len(participants) >= 2:
                 
-                # ========== 提取核心观点 ==========
+                                # ========== 提取核心观点 ==========
                 def extract_core_arguments(messages):
-                    """从讨论中提取核心论点"""
-                    arguments = []
-                    
-                    for msg in messages:
-                        text = msg.get("message", "").lower()
+                    """从讨论中动态提取核心论点（使用LLM）"""
+                    try:
+                        # 尝试使用 LLM 提取
+                        from discussion_analytics import extract_claims_with_llm
+                        claims = extract_claims_with_llm(messages)
+                        return claims
+                    except Exception as e:
+                        print(f"LLM extraction error: {e}")
+                        # 备用方案：简单关键词提取
+                        arguments = []
                         
-                        # 检测论点关键词
-                        if any(kw in text for kw in ['观点', '论点', 'argument', 'point']):
-                            # 简单提取：使用消息的第一句话
-                            sentences = msg.get("message", "").split("。")
-                            if sentences[0]:
-                                arg = sentences[0][:50]  # 只取前50个字符
-                                if arg not in arguments and len(arg) > 5:
-                                    arguments.append(arg)
-                    
-                    # 如果没有提取到，生成通用论点
-                    if not arguments:
-                        arguments = ["观点A", "观点B", "观点C"]
-                    
-                    return arguments[:4]  # 最多4个观点
+                        for msg in messages:
+                            text = msg.get("message", "")
+                            
+                            # 检测论点关键词
+                            if any(kw in text.lower() for kw in ['观点', '论点', '应该', '认为', 'claim', 'should']):
+                                # 取第一句，最多25字符
+                                sentences = text.split("。")
+                                if sentences[0]:
+                                    arg = sentences[0][:25]
+                                    if arg not in arguments and len(arg) > 3:
+                                        arguments.append(arg)
+                        
+                        # 如果还是没提取到，用通用值
+                        if not arguments:
+                            arguments = ["观点A", "观点B", "观点C"]
+                        
+                        return arguments[:4]
                 
                 core_arguments = extract_core_arguments(messages)
                 
