@@ -880,7 +880,9 @@ else:
                                 discussion = discussion[:1500]
                             
                             # 调用 API（用 Scaffolded 模式）
-                            prompt = f"""Extract 3-4 key viewpoints from this discussion. Each viewpoint should be ONE SHORT sentence (max 15 words).
+                            prompt = f"""Extract 3-4 key viewpoints from this discussion. 
+Each viewpoint must be SHORT (max 12 words, aim for 6-8 words).
+Make them concise and clear.
 
 Discussion:
 {discussion}
@@ -899,8 +901,8 @@ List each viewpoint on a new line, no numbers or bullets:"""
                                 for line in response.split('\n'):
                                     line = line.strip()
                                     
-                                    # 跳过空行和太短的内容
-                                    if not line or len(line) < 5 or len(line) > 80:
+                                    # 跳过空行和太短/太长的内容
+                                    if not line or len(line) < 5 or len(line) > 50:
                                         continue
                                     
                                     # 移除开头数字
@@ -910,8 +912,11 @@ List each viewpoint on a new line, no numbers or bullets:"""
                                             cleaned = cleaned[len(prefix):].strip()
                                             break
                                     
+                                    # 限制长度到 30 字符
                                     if cleaned and len(cleaned) >= 5:
-                                        viewpoints.append(cleaned[:70])  # 限制长度
+                                        if len(cleaned) > 30:
+                                            cleaned = cleaned[:27] + "..."
+                                        viewpoints.append(cleaned)
                                 
                                 if len(viewpoints) >= 3:
                                     return viewpoints[:4]
@@ -955,26 +960,29 @@ List each viewpoint on a new line, no numbers or bullets:"""
                         
                         matrix_data.append(row)
                     
-                    # 创建 DataFrame
-                    df = pd.DataFrame(matrix_data, index=participants)
-                    
-                    # 定义样式
-                    def style_cells(val):
-                        if val == "✅":
-                            return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
-                        elif val == "❌":
-                            return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
-                        else:
-                            return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
-                    
-                    # 显示表格
-                    styled_df = df.style.applymap(style_cells)
-                    st.dataframe(styled_df, use_container_width=True)
-                    
-                    st.divider()
-                    
-                    # 图例
-                    st.markdown("**Legend:** ✅ Agree (赞成)  |  ❌ Disagree (反对)  |  △ Neutral (中立)")
+                    # 创建 DataFrame（确保列名正确）
+                    if matrix_data:
+                        df = pd.DataFrame(matrix_data, index=participants)
+                        
+                        # 定义样式
+                        def style_cells(val):
+                            if val == "✅":
+                                return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
+                            elif val == "❌":
+                                return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
+                            else:
+                                return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
+                        
+                        # 显示表格
+                        styled_df = df.style.applymap(style_cells)
+                        st.dataframe(styled_df, use_container_width=True, height=200)
+                        
+                        st.divider()
+                        
+                        # 图例
+                        st.markdown("**Legend:** ✅ Agree (赞成)  |  ❌ Disagree (反对)  |  △ Neutral (中立)")
+                    else:
+                        st.warning("⚠️ 无法构建矩阵，请确保有讨论数据")
                 with tab2:
                     st.subheader("📈 Convergence Analysis")
                     
