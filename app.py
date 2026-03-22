@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from ai_agent import generate_response, generate_argument_map
-from consensus_matrix import render_consensus_matrix
+# from consensus_matrix import render_consensus_matrix  # 暂时禁用
 from discussion_analytics import render_voice_balance, render_viewpoint_evolution
 
 st.set_page_config(
@@ -845,22 +845,15 @@ else:
             st.rerun()
         
         # ========== Analysis Sections ==========
-        st.divider()
+st.divider()
+
+if "session_id" in st.session_state and st.session_state.session_id:
+    tab1, tab2, tab3 = st.tabs(["📊 Consensus Matrix", "🎙️ Voice Balance", "📈 Viewpoint Evolution"])
+    
+    with tab1:
+        st.write("### 📊 Consensus Matrix (coming soon)")
+        st.info("💭 Consensus Matrix visualization will be available soon. Keep discussing to build more data!")
         
-        # 矩阵视图和分���
-        if "session_id" in st.session_state and st.session_state.session_id:
-            tab1, tab2, tab3 = st.tabs(["📊 Consensus Matrix", "🎙️ Voice Balance", "📈 Viewpoint Evolution"])
-            
-            with tab1:
-                all_data = load_all_sessions()
-                current_sess = all_data.get(st.session_state.session_id, {})
-                messages = current_sess.get("messages", [])
-                participants = get_session_participants(st.session_state.session_id)
-                
-                if len(messages) > 1:
-                    render_consensus_matrix(messages, participants)
-                else:
-                    st.info("💭 Need at least 2 messages to generate consensus matrix")
             
             with tab2:
                 if len(current_history) >= 2:
