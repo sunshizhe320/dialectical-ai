@@ -1,4 +1,3 @@
-discussion_analytics.py
 """
 讨论分析与可视化
 - 人声比例（Voice Balance）
@@ -126,24 +125,26 @@ def render_voice_balance(messages, participants):
     
     total_human_msg = sum(user_msg_count.values())
     
-    cols = st.columns(len(user_msg_count))
-    for col, (user, count) in enumerate(sorted(user_msg_count.items(), key=lambda x: x[1], reverse=True)):
-        with cols[col]:
-            percentage = count / total_human_msg * 100
-            st.metric(f"👤 {user}", f"{count}", f"{percentage:.1f}%")
+    if len(user_msg_count) > 0:
+        cols = st.columns(len(user_msg_count))
+        for col, (user, count) in enumerate(sorted(user_msg_count.items(), key=lambda x: x[1], reverse=True)):
+            with cols[col]:
+                percentage = count / total_human_msg * 100
+                st.metric(f"👤 {user}", f"{count}", f"{percentage:.1f}%")
     
     # 健康度评估
     st.divider()
     st.write("**讨论健康度评估：**")
     
     # 指标1：AI占比
-    ai_ratio = ai_msg_count / total_messages
-    if ai_ratio > 0.4:
-        st.warning("⚠️ **AI声音过多** - AI占比超过40%，建议增加人类讨论")
-    elif ai_ratio < 0.1:
-        st.info("💡 **可增加AI引导** - AI参与度偏低，可通过@AI让AI参与更多")
-    else:
-        st.success(f"✓ **平衡适中** - AI占比{ai_ratio*100:.1f}%，符合支架教学规范")
+    if total_messages > 0:
+        ai_ratio = ai_msg_count / total_messages
+        if ai_ratio > 0.4:
+            st.warning("⚠️ **AI声音过多** - AI占比超过40%，建议增加人类讨论")
+        elif ai_ratio < 0.1:
+            st.info("💡 **可增加AI引导** - AI参与度偏低，可通过@AI让AI参与更多")
+        else:
+            st.success(f"✓ **平衡适中** - AI占比{ai_ratio*100:.1f}%，符合支架教学规范")
     
     # 指标2：参与均衡度
     if len(user_msg_count) > 1:
@@ -175,7 +176,10 @@ def render_viewpoint_evolution(messages, participants, topic=""):
         if user != 'AI' and user in evolution_data:
             # 计算立场评分
             stance_score = calculate_stance_score(msg['message'], topic)
-            timestamp = datetime.fromisoformat(msg['timestamp'])
+            try:
+                timestamp = datetime.fromisoformat(msg['timestamp'])
+            except:
+                timestamp = datetime.now()
             
             evolution_data[user].append({
                 'time': timestamp,
@@ -227,7 +231,7 @@ def render_viewpoint_evolution(messages, participants, topic=""):
     st.plotly_chart(fig, use_container_width=True)
     
     # 分析总结
-    st.write("**演化分析：**")
+    st.write("**���化分析：**")
     
     for participant in participants:
         if not evolution_data[participant]:
