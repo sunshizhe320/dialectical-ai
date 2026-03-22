@@ -63,17 +63,28 @@ def get_or_create_session(team_name, topic, mode, created_by):
     """Get or create session - include mode in session ID"""
     all_sessions = load_all_sessions()
     
-    # Check if session with same team, topic AND mode exists
+    # 规范化输入以确保完全匹配
+    team_name = team_name.strip()
+    topic = topic.strip()
+    mode = mode.strip()
+    
+    # 检查是否存在相同的 session
     for sid, info in all_sessions.items():
-        if (info.get("team_name") == team_name and 
-            info.get("topic") == topic and 
-            info.get("mode") == mode):  # ✅ 添加这一行
+        existing_team = info.get("team_name", "").strip()
+        existing_topic = info.get("topic", "").strip()
+        existing_mode = info.get("mode", "").strip()
+        
+        if (existing_team == team_name and 
+            existing_topic == topic and 
+            existing_mode == mode):
             print(f"✅ Found existing session: {sid}")
+            print(f"  Team: {existing_team}")
+            print(f"  Topic: {existing_topic[:50]}...")
+            print(f"  Mode: {existing_mode}")
             return sid
     
-    # Create new session - include mode in ID
+    # 创建新 session
     topic_short = topic.replace('?', '').replace('？', '')[:20]
-    # ✅ 修改这一行，加入 mode
     session_id = f"{team_name}_{topic_short}_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     all_sessions[session_id] = {
@@ -87,6 +98,9 @@ def get_or_create_session(team_name, topic, mode, created_by):
     
     save_all_sessions(all_sessions)
     print(f"✅ Created new session: {session_id}")
+    print(f"  Team: {team_name}")
+    print(f"  Topic: {topic[:50]}...")
+    print(f"  Mode: {mode}")
     return session_id
 
 def add_participant(session_id, user_name):

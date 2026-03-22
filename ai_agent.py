@@ -72,13 +72,16 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
             "Authorization": f"Bearer {MOONSHOT_KEY}"
         }
         
+               # 确保 system prompt 包含英文强制指令
+        full_system_prompt = system_prompt + "\n\n[FINAL INSTRUCTION]: Always respond in English, never in other languages."
+        
         payload = {
             "model": "moonshot-v1-8k",
             "messages": [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": full_system_prompt},
                 {"role": "user", "content": user_message}
             ],
-            "temperature": 0.7,
+            "temperature": 0.3,  # 降低温度以提高指令遵循度
             "max_tokens": max_tokens
         }
         
@@ -190,28 +193,51 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
 
 
 def _get_system_prompt(mode):
-    """Get system prompt based on mode"""
+    """
+    Get system prompt based on mode
+    ✅ FORCE ENGLISH OUTPUT
+    """
     
-    # 强制英文回复的基础指令
-    FORCE_ENGLISH = "IMPORTANT: You MUST respond ONLY in English, regardless of the language of the user's message. Always use English for your entire response."
+    # 最强硬的英文强制指令
+    FORCE_ENGLISH = (
+        "**CRITICAL INSTRUCTION**: You MUST respond ONLY in ENGLISH. "
+        "No matter what language the user writes in, you must reply in English only. "
+        "Do not translate, do not code-mix, do not include any non-English text. "
+        "ENGLISH ONLY. ENGLISH ONLY. ENGLISH ONLY."
+    )
     
     if "Scaffolded" in mode:
         return (
             f"{FORCE_ENGLISH}\n\n"
             "You are a Socratic tutor with expertise in critical thinking. "
-            "Your role is to ask insightful questions that help students think deeper. "
-            "Never give direct answers. Challenge assumptions. Keep responses concise."
+            "Your role is to: "
+            "1. Ask insightful questions that help students think deeper "
+            "2. Never give direct answers, but guide students to discover themselves "
+            "3. Challenge assumptions and request evidence "
+            "4. Encourage students to think from multiple perspectives. "
+            "Keep your responses concise and thought-provoking. "
+            "Remember: RESPOND IN ENGLISH ONLY!"
         )
+    
     elif "Debater" in mode:
         return (
             f"{FORCE_ENGLISH}\n\n"
-            "You are a critical debater. Identify logical flaws in arguments. "
-            "Present counter-arguments. Provide concrete examples. "
-            "Demand stronger evidence. Maintain a respectful tone."
+            "You are an expert critical debater and logical analyst. "
+            "Your role is to: "
+            "1. Identify logical flaws and weaknesses in arguments "
+            "2. Present strong counter-arguments using words like 'However', 'On the contrary', 'I disagree' "
+            "3. Provide concrete examples or alternative explanations "
+            "4. Demand stronger evidence and support "
+            "5. Maintain a respectful and constructive tone. "
+            "Focus on the logic and evidence, not the person. "
+            "Remember: RESPOND IN ENGLISH ONLY!"
         )
+    
     else:
-        return f"{FORCE_ENGLISH}\n\nYou are a helpful AI assistant. Answer clearly and directly."
-
+        return (
+            f"{FORCE_ENGLISH}\n\n"
+            "You are a helpful AI assistant. Answer clearly and directly in English only."
+        )
 def _get_fallback(mode):
     """Fallback responses"""
     if "Scaffolded" in mode:
