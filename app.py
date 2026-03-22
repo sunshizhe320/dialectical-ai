@@ -860,87 +860,16 @@ else:
                 with tab1:
                     st.subheader("📊 Consensus Matrix")
                     
-                    # ========== 第一步：调用 API 提取观点 ==========
-                    def extract_viewpoints_from_api(messages, mode):
-                        """调用 API 从讨论中提取核心观点"""
-                        try:
-                            from ai_agent import generate_response
-                            
-                            # 准备讨论文本
-                            discussion = "\n".join([
-                                f"{m.get('user', 'Unknown')}: {m.get('message', '')}"
-                                for m in messages[-12:]  # 最近12条消息
-                            ])
-                            
-                            if len(discussion) > 2000:
-                                discussion = discussion[:2000]
-                            
-                            # 提示词：要求 AI 提取观点
-                            prompt = f"""Analyze the following discussion and extract 3-4 core viewpoints or main arguments.
-Each viewpoint should be ONE SHORT sentence (maximum 15 characters).
-Return ONLY the viewpoints, one per line, without numbers or bullet points.
-
-Discussion:
-{discussion}
-
-Return ONLY the viewpoints, one per line:"""
-                            
-                            # 调用 API（使用正确的参数）
-                            response = generate_response(
-                                mode="Control",  # 用 Control 模式，避免干扰
-                                user_message=prompt,
-                                group_id=st.session_state.session_id,
-                                user="System"
-                            )
-                            
-                            if response and not response.startswith("(This is the control"):
-                                # 解析响应
-                                viewpoints = []
-                                for line in response.split('\n'):
-                                    line = line.strip()
-                                    
-                                    # 跳过空行和说明文字
-                                    if not line or "Discussion" in line or "viewpoint" in line.lower():
-                                        continue
-                                    
-                                    # 清理
-                                    cleaned = line
-                                    for prefix in ['1.', '2.', '3.', '4.', '-', '•', '·']:
-                                        if cleaned.startswith(prefix):
-                                            cleaned = cleaned[len(prefix):].strip()
-                                    
-                                    if cleaned and len(cleaned) >= 3 and len(cleaned) <= 40:
-                                        viewpoints.append(cleaned)
-                                
-                                if len(viewpoints) >= 3:
-                                    return viewpoints[:4]
-                        
-                        except Exception as e:
-                            print(f"⚠️ Extract viewpoints error: {e}")
-                        
-                        # 备用观点
-                        return ["Viewpoint A", "Viewpoint B", "Viewpoint C"]
-                    
-                    # 获取观点
-                    with st.spinner("🤖 Extracting core viewpoints from discussion..."):
-                        core_viewpoints = extract_viewpoints_from_api(messages, mode)
-                    
-                    st.success(f"✅ Extracted {len(core_viewpoints)} core viewpoints")
-                    st.markdown("**AI-Identified Viewpoints:**")
-                    for i, vp in enumerate(core_viewpoints, 1):
-                        st.caption(f"{i}. {vp}")
-                    
-                    st.divider()
-                    
-                    # ========== 第二步：构建共识矩阵 ==========
                     import pandas as pd
                     
+                    # 使用固定的观点（因为 API 调用有问题）
+                    core_viewpoints = ["观点A", "观点B", "观点C"]
+                    
+                    # 构建矩阵
                     matrix_data = []
                     
                     for participant in participants:
                         row = {}
-                        
-                        # 获取该参与者的所有消息
                         participant_messages = [
                             m.get("message", "")
                             for m in messages
@@ -948,13 +877,11 @@ Return ONLY the viewpoints, one per line:"""
                         ]
                         participant_text = " ".join(participant_messages).lower()
                         
-                        # 对每个观点判断态度
                         for viewpoint in core_viewpoints:
-                            stance = "△"  # 默认中立
+                            stance = "△"
                             
-                            # 关键词匹配
-                            agree_keywords = ['赞成', '同意', '支持', '对', '对的', 'agree', 'yes', '正确', '有道理', '确实']
-                            disagree_keywords = ['反对', '不同意', '反驳', 'disagree', 'no', '错误', '不对', '不然']
+                            agree_keywords = ['赞成', '同意', '支持', 'agree', 'yes']
+                            disagree_keywords = ['反对', '不同意', 'disagree', 'no']
                             
                             has_agree = any(kw in participant_text for kw in agree_keywords)
                             has_disagree = any(kw in participant_text for kw in disagree_keywords)
@@ -971,9 +898,7 @@ Return ONLY the viewpoints, one per line:"""
                     # 创建 DataFrame
                     df = pd.DataFrame(matrix_data, index=participants)
                     
-                    # ========== 第三步：美化显示 ==========
-                    
-                    # 定义样式函数
+                    # 定义样式
                     def style_cells(val):
                         if val == "✅":
                             return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
@@ -982,94 +907,15 @@ Return ONLY the viewpoints, one per line:"""
                         else:
                             return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
                     
-                    # 应用样式
+                    # 显示表格
                     styled_df = df.style.applymap(style_cells)
-                    
-                    # 显示矩阵
                     st.dataframe(styled_df, use_container_width=True)
                     
                     st.divider()
                     
-                    # 图例
-                    st.markdown("**Legend:**")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.markdown("✅ **Agree (赞成)**")
-                    with col2:
-                        st.markdown("❌ **Disagree (反对)**")
-                    with col3:
-                        st.markdown("△ **Neutral (中立)**")
-                    # 创建 DataFrame（纵轴=参与者，横轴=观点）
-                    df = pd.DataFrame(matrix_data, index=participants)
+                    # 简洁的图例
+                    st.markdown("**Legend:** ✅ Agree (赞成)  |  ❌ Disagree (反对)  |  △ Neutral (中立)")
                     
-                    # ========== 步骤3：美化和显示 ==========
-                    
-                    # 处理长列名（缩写）
-                    display_columns = []
-                    column_full_names = {}  # 保存缩写到完整名称的映射
-                    
-                    for col in df.columns:
-                        if len(col) > 12:
-                            # 超过12字符则缩写
-                            abbreviated = col[:10] + "..."
-                            display_columns.append(abbreviated)
-                            column_full_names[abbreviated] = col
-                        else:
-                            display_columns.append(col)
-                            column_full_names[col] = col
-                    
-                    df.columns = display_columns
-                    
-                    # 定义颜色函数
-                    def style_cells(val):
-                        """对不同的立场值应用不同颜色"""
-                        if val == "✅":
-                            # 赞成：绿色
-                            return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center; padding: 10px;'
-                        elif val == "❌":
-                            # 反对：红色
-                            return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center; padding: 10px;'
-                        else:
-                            # 中立：黄色
-                            return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center; padding: 10px;'
-                    
-                    # 应用样式
-                    styled_df = df.style.applymap(style_cells)
-                    
-                    # 显示矩阵
-                    st.dataframe(styled_df, use_container_width=True, height=200)
-                    
-                    st.divider()
-                    
-                    # 显示缩写说明（如果有的话）
-                    abbreviated_cols = {k: v for k, v in column_full_names.items() if k != v}
-                    if abbreviated_cols:
-                        st.markdown("**Full Viewpoint Names:**")
-                        for short, full in abbreviated_cols.items():
-                            st.caption(f"• {short} → {full}")
-                    
-                    st.divider()
-                    
-                    # 图例说明
-                    st.markdown("**Legend:**")
-                    col_leg1, col_leg2, col_leg3 = st.columns(3)
-                    with col_leg1:
-                        st.markdown("**✅ Agree** (赞成)")
-                    with col_leg2:
-                        st.markdown("**❌ Disagree** (反对)")
-                    with col_leg3:
-                        st.markdown("**△ Neutral** (中立/未表达)")
-                    
-                    st.divider()
-                    
-                    # 矩阵说明
-                    st.info("""
-                    **How to read this matrix:**
-                    - **Rows (纵轴):** Participants' names
-                    - **Columns (横轴):** Core viewpoints extracted from discussion
-                    - **Cells (单元格):** Each participant's stance on each viewpoint
-                    """)
-                
                 with tab2:
                     st.subheader("📈 Convergence Analysis")
                     
