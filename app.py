@@ -861,15 +861,69 @@ else:
                     st.subheader("📊 Consensus Matrix")
                     
                     import pandas as pd
-                    from ai_agent import extract_viewpoints
                     
-                    # 调用 API 提取真实观点
+                    # ========== 定义观点提取函数 ==========
+                    def extract_viewpoints_local(messages):
+                        """从讨论中提取核心观点"""
+                        if not messages or len(messages) < 2:
+                            return ["观点A", "观点B", "观点C"]
+                        
+                        try:
+                            from ai_agent import generate_response
+                            
+                            # 准备讨论文本
+                            discussion = "\n".join([
+                                f"{m.get('user', 'Unknown')}: {m.get('message', '')}"
+                                for m in messages[-10:]
+                            ])
+                            
+                            if len(discussion) > 1500:
+                                discussion = discussion[:1500]
+                            
+                            # 调用 API
+                            prompt = f"""从以下讨论中提取3-4个核心观点。每个观点用一句话表达（不超过15字）。
+
+讨论内容：
+{discussion}
+
+请直接列出观点，每行一个，不要序号或其他符号："""
+                            
+                            response = generate_response(
+                                mode="Control",
+                                user_message=prompt,
+                                group_id=st.session_state.session_id,
+                                user="System"
+                            )
+                            
+                            if response and not response.startswith("(This is"):
+                                viewpoints = []
+                                for line in response.split('\n'):
+                                    line = line.strip()
+                                    if not line or len(line) < 3 or len(line) > 40:
+                                        continue
+                                    
+                                    cleaned = line
+                                    for prefix in ['1.', '2.', '3.', '4.', '-', '•', '·']:
+                                        if cleaned.startswith(prefix):
+                                            cleaned = cleaned[len(prefix):].strip()
+                                            break
+                                    
+                                    if cleaned and len(cleaned) >= 3 and len(cleaned) <= 35:
+                                        viewpoints.append(cleaned)
+                                
+                                if len(viewpoints) >= 3:
+                                    return viewpoints[:4]
+                        
+                        except Exception as e:
+                            print(f"⚠️ 提取观点错误: {e}")
+                        
+                        return ["观点A", "观点B", "观点C"]
+                    
+                    # ========== 调用函数提取观点 ==========
                     with st.spinner("🤖 AI 正在分析讨论内容..."):
-                        core_viewpoints = extract_viewpoints(messages)
+                        core_viewpoints = extract_viewpoints_local(messages)
                     
-                    st.success(f"✅ 已提取 {len(core_viewpoints)} 个核心观点")
-                    
-                    # 构建矩阵
+                    # ========== 构建矩阵 ==========
                     matrix_data = []
                     
                     for participant in participants:
