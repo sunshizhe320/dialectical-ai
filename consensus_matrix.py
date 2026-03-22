@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.figure_factory as ff
 import plotly.graph_objects as go
 
 def render_consensus_matrix(messages, participants):
@@ -15,14 +14,18 @@ def render_consensus_matrix(messages, participants):
     st.markdown("## 📊 **Consensus Matrix (共识热力图)**")
     
     # 自动提取关键观点
-    viewpoints = extract_key_viewpoints(messages)  # 从讨论中提取
+    viewpoints = extract_key_viewpoints(messages)
+    
+    if not viewpoints:
+        st.info("💭 需要更多讨论数据来生成观点矩阵")
+        return
     
     # 构建矩阵数据
     matrix_data = []
     for participant in participants:
         row = []
         for viewpoint in viewpoints:
-            # 通过AI判断该参与者是否支持该观点
+            # 通过规则判断该参与者是否支持该观点
             stance = classify_stance(participant, viewpoint, messages)
             row.append(stance)  # ✓ / × / △
         matrix_data.append(row)
@@ -31,7 +34,7 @@ def render_consensus_matrix(messages, participants):
     df_matrix = pd.DataFrame(
         matrix_data,
         index=participants,
-        columns=[vp[:15] + "..." for vp in viewpoints]  # 截断长观点名
+        columns=[vp[:15] + "..." if len(vp) > 15 else vp for vp in viewpoints]
     )
     
     # 方法A: 表格化呈现
@@ -105,26 +108,64 @@ def render_consensus_matrix(messages, participants):
 
 def extract_key_viewpoints(messages):
     """从讨论中自动提取关键观点"""
-    # 调用AI分析关键论点
-    viewpoints = [
-        "社交媒体算法加剧极化",
-        "人类偏见是主要原因",
-        "个人使用习惯重要",
-        "教育可以缓解问题",
-        "平台设计需要改进"
-    ]
-    return viewpoints[:4]  # 取前4个
+    
+    if not messages:
+        return []
+    
+    # 简化版：提取常见关键词作为观点
+    viewpoints = set()
+    
+    keywords_map = {
+        "算法": "社交媒体算法影响",
+        "个人选择": "个人使用习惯重要",
+        "教育": "教育可以缓解问题",
+        "平台": "平台设计需要改进",
+        "偏见": "人类偏见是主要原因",
+        "推荐": "推荐系统加剧极化",
+        "内容": "内容分发机制有问题",
+        "用户": "用户自主选择重要"
+    }
+    
+    for msg in messages:
+        content = msg.get('message', '').lower()
+        for keyword, viewpoint in keywords_map.items():
+            if keyword.lower() in content:
+                viewpoints.add(viewpoint)
+    
+    if not viewpoints:
+        # 默认观点
+        viewpoints = {
+            "算法是主要原因",
+            "人类偏见很重要",
+            "平台需要改进",
+            "教育可以帮助"
+        }
+    
+    return list(viewpoints)[:4]  # 取前4个
 
 
 def classify_stance(participant, viewpoint, messages):
     """判断参与者对某观点的立场"""
-    # 简化版：可以调用AI或规则引擎
-    # 这里示例用规则
-    participant_messages = [m for m in messages if m['user'] == participant]
     
-    # 计算支持/反对的词频
-    support_count = sum(1 for m in participant_messages if '同意' in m['message'] or '支持' in m['message'])
-    oppose_count = sum(1 for m in participant_messages if '不同意' in m['message'] or '反对' in m['message'])
+    participant_messages = [m for m in messages if m.get('user') == participant]
+    
+    if not participant_messages:
+        return '△'
+    
+    # 简单规则：计算支持/反对的词频
+    support_count = 0
+    oppose_count = 0
+    
+    for m in participant_messages:
+        content = m.get('message', '').lower()
+        
+        # 支持的关键词
+        if any(word in content for word in ['同意', '支持', '赞同', '确实', '是的', '对', 'agree', 'yes', 'support']):
+            support_count += 1
+        
+        # 反对的关键词
+        if any(word in content for word in ['不同意', '反对', '否则', '反而', '但是', 'disagree', 'no', 'oppose']):
+            oppose_count += 1
     
     if support_count > oppose_count:
         return '✓'
