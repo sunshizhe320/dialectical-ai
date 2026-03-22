@@ -670,23 +670,6 @@ else:
         
         history = get_history(st.session_state.session_id, limit=500)
         
-        # ✅ 批量获取AI反馈分析
-        if history and len(history) > 0:
-            from ai_feedback_analyzer import batch_analyze_messages
-            
-            # 获取会话信息用于分析上下文
-            session_info_data = get_session_info(st.session_state.session_id)
-            topic = session_info_data.get("topic", "") if session_info_data else ""
-            
-            # 批量分析（有缓存，速度快）
-            feedback_map, _ = batch_analyze_messages(
-                history, 
-                st.session_state.session_id,
-                topic=topic
-            )
-        else:
-            feedback_map = {}
-        
         if history:
             for msg in history:
                 role = msg["role"]
@@ -714,17 +697,13 @@ else:
                         </div>
                         """, unsafe_allow_html=True)
                 else:
-                    # 用户消息 + AI维度标签
+                    # 用户消息（简化版，不显示AI标签）
                     col1, col2 = st.columns([0.92, 0.08])
                     with col1:
                         is_self = user == st.session_state.user_name
                         has_ai_mention = "@AI" in content or "@ai" in content or "＠AI" in content
                         
-                        # 获取AI反馈（如果有）
-                        msg_id = f"{timestamp}_{user}"
-                        ai_feedback = feedback_map.get(msg_id)
-                        
-                        # 构建HTML气泡
+                        # 构建简化的HTML气泡
                         bubble_html = f"""
                         <div class="student-bubble" style="{'border: 2px solid #ff9800;' if has_ai_mention else ''}">
                             <div class="bubble-header">
@@ -732,41 +711,9 @@ else:
                                 <span class="timestamp">{time_str}</span>
                             </div>
                             <div class="message-content">{content}</div>
+                        </div>
                         """
                         
-                        # ✅ 添加AI维度标签
-                        if ai_feedback and ai_feedback.get('type'):
-                            type_colors = {
-                                'Related': '#E3F2FD',
-                                'Additional': '#F3E5F5',
-                                'Challenge': '#FFF3E0'
-                            }
-                            type_text_colors = {
-                                'Related': '#1976D2',
-                                'Additional': '#7B1FA2',
-                                'Challenge': '#E65100'
-                            }
-                            
-                            type_name = ai_feedback['type']
-                            verdict = ai_feedback.get('verdict', '△')
-                            confidence = ai_feedback.get('confidence', 0.5)
-                            
-                            bubble_html += f"""
-                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd; display: flex; gap: 6px; flex-wrap: wrap;">
-                                <span style="display: inline-block; background: {type_colors.get(type_name, '#E3F2FD')}; 
-                                             padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; 
-                                             color: {type_text_colors.get(type_name, '#1976D2')}; font-weight: 600;">
-                                    📌 {type_name}
-                                </span>
-                                <span style="display: inline-block; background: #F5F5F5; 
-                                             padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; 
-                                             color: #333; font-weight: 600;">
-                                    {verdict} {confidence:.0%}
-                                </span>
-                            </div>
-                            """
-                        
-                        bubble_html += "</div>"
                         st.markdown(bubble_html, unsafe_allow_html=True)
         else:
             st.info("💭 Start discussing!")
