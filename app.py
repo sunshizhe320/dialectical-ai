@@ -857,7 +857,7 @@ else:
                 # ========== 显示标签页 ==========
                 tab1, tab2, tab3 = st.tabs(["📊 Consensus Matrix", "📈 Convergence Analysis", "💬 Mutual Feedback"])
                 
-                                with tab1:
+                with tab1:
                     st.subheader("📊 Consensus Matrix")
                     
                     # ========== 步骤1：调用 API 提取观点 ==========
