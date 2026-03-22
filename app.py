@@ -8,8 +8,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from ai_agent import generate_response, generate_argument_map
-from consensus_matrix import render_consensus_matrix  
+# from consensus_matrix import render_consensus_matrix  # 不再使用外部模块
 from discussion_analytics import render_voice_balance, render_viewpoint_evolution
+
 
 st.set_page_config(
     page_title="Dialectical AI Partner",
@@ -797,13 +798,74 @@ st.divider()
 if "session_id" in st.session_state and st.session_state.session_id:
     tab1, tab2, tab3 = st.tabs(["📊 Consensus Matrix", "🎙️ Voice Balance", "📈 Viewpoint Evolution"])
     
-    with tab1:
+with tab1:
+    st.write("### 📊 Consensus Matrix")
+    
+    try:
         all_data = load_all_sessions()
         current_sess = all_data.get(st.session_state.session_id, {})
         messages = current_sess.get("messages", [])
         participants = get_session_participants(st.session_state.session_id)
         
-        if len(messages) > 2 and len(participants) > 1:
-            render_consensus_matrix(messages, participants)
+        st.write(f"**DEBUG: Messages={len(messages)}, Participants={len(participants)}, Names={participants}**")
+        
+        if len(messages) >= 3 and len(participants) >= 2:
+            # 简单的共识矩阵（不依赖 consensus_matrix.py）
+            import pandas as pd
+            
+            st.success("✅ Generating consensus matrix...")
+            
+            # 手动生成观点
+            viewpoints = ["观点 A", "观点 B", "观点 C"]
+            
+            # 构建矩阵
+            matrix_data = []
+            for participant in participants:
+                row = []
+                for vp in viewpoints:
+                    # 简单规则：检查参与者消息中是否有特定关��词
+                    participant_msgs = " ".join([
+                        m.get('message', '').lower() 
+                        for m in messages 
+                        if m.get('user') == participant
+                    ])
+                    
+                    if any(w in participant_msgs for w in ['同意', '支持', '对']):
+                        stance = "✓"
+                    elif any(w in participant_msgs for w in ['反对', '不同意']):
+                        stance = "×"
+                    else:
+                        stance = "△"
+                    row.append(stance)
+                matrix_data.append(row)
+            
+            df = pd.DataFrame(
+                matrix_data,
+                index=participants,
+                columns=viewpoints
+            )
+            
+            # 颜色映射
+            def color_stance(val):
+                if val == "✓":
+                    return 'background-color: #90EE90; color: #000; font-weight: bold;'
+                elif val == "×":
+                    return 'background-color: #FFB6C6; color: #000; font-weight: bold;'
+                else:
+                    return 'background-color: #FFE4B5; color: #000; font-weight: bold;'
+            
+            styled_df = df.style.applymap(color_stance)
+            st.dataframe(styled_df, use_container_width=True)
+            
+            # 图例
+            st.markdown("---")
+            col1, col2, col3 = st.columns(3)
+            col1.markdown("**✓ = Agree (同意)**")
+            col2.markdown("**× = Disagree (不同意)**")
+            col3.markdown("**△ = Neutral (中立)**")
         else:
-            st.info("💭 Need at least 2 different participants with 2+ messages")
+            st.info(f"💭 Need at least 3 messages and 2+ participants. Current: {len(messages)} messages, {len(participants)} participants")
+    
+    except Exception as e:
+        st.error(f"❌ Error rendering consensus matrix: {str(e)}")
+        st.write(e)
