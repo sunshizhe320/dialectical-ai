@@ -862,6 +862,36 @@ else:
                     
                     import pandas as pd
                     from ai_agent import generate_response
+                    import json
+                    from pathlib import Path
+                    
+                    # ========== 矩阵缓存文件 ==========
+                    MATRIX_CACHE_DIR = Path("matrix_cache")
+                    MATRIX_CACHE_DIR.mkdir(exist_ok=True)
+                    
+                    def get_matrix_cache_file(session_id):
+                        """获取该session的矩阵缓存文件"""
+                        return MATRIX_CACHE_DIR / f"{session_id}_matrix.json"
+                    
+                    def load_cached_matrix(session_id):
+                        """加载已缓存的矩阵"""
+                        cache_file = get_matrix_cache_file(session_id)
+                        if cache_file.exists():
+                            try:
+                                with open(cache_file, 'r', encoding='utf-8') as f:
+                                    return json.load(f)
+                            except:
+                                return None
+                        return None
+                    
+                    def save_matrix_cache(session_id, data):
+                        """保存矩阵到缓存"""
+                        cache_file = get_matrix_cache_file(session_id)
+                        try:
+                            with open(cache_file, 'w', encoding='utf-8') as f:
+                                json.dump(data, f, ensure_ascii=False, indent=2)
+                        except Exception as e:
+                            print(f"❌ 保存矩阵缓存失败: {e}")
                     
                     # ========== 第1步：提取观点 ==========
                     def extract_viewpoints(messages):
@@ -943,11 +973,7 @@ For EACH viewpoint, determine if {participant_name}:
 - Disagrees (❌)  
 - Neutral/Not mentioned (△)
 
-Return ONLY the symbols in order:
-✅
-❌
-△
-(one per line)"""
+Return ONLY the symbols in order, one per line:"""
                             
                             response = generate_response(
                                 mode="Scaffolded",
@@ -978,21 +1004,38 @@ Return ONLY the symbols in order:
                             print(f"⚠️ 分析态度错误: {e}")
                             return {vp: "△" for vp in viewpoints_list}
                     
-                    # ========== 第4步：构建矩阵 ==========
-                    matrix_dict = {}
+                    # ========== 第4步：检查缓存和构建矩阵 ==========
+                    cached_data = load_cached_matrix(st.session_state.session_id)
                     
-                    with st.spinner("🤖 AI 正在分析每个人的态度..."):
-                        for participant in participants:
-                            participant_text = " ".join([
-                                m.get("message", "")
-                                for m in messages
-                                if m.get("user") == participant
-                            ])
-                            
-                            stances = analyze_stance_by_ai(participant, participant_text, core_viewpoints)
-                            matrix_dict[participant] = stances
+                    if cached_data and cached_data.get("viewpoints") == core_viewpoints:
+                        # 使用缓存的矩阵
+                        matrix_dict = cached_data.get("matrix", {})
+                        st.info("✅ 使用已保存的分析结果（所有成员看到相同表格）")
+                    else:
+                        # 生成新矩阵
+                        matrix_dict = {}
+                        
+                        with st.spinner("🤖 AI 正在分析每个人的态度..."):
+                            for participant in participants:
+                                participant_text = " ".join([
+                                    m.get("message", "")
+                                    for m in messages
+                                    if m.get("user") == participant
+                                ])
+                                
+                                stances = analyze_stance_by_ai(participant, participant_text, core_viewpoints)
+                                matrix_dict[participant] = stances
+                        
+                        # 保存到文件（跨设���同步）
+                        cache_data = {
+                            "viewpoints": core_viewpoints,
+                            "matrix": matrix_dict,
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        save_matrix_cache(st.session_state.session_id, cache_data)
+                        st.success("✅ 分析完成，已保存结果")
                     
-                    # 创建 DataFrame
+                    # ========== 显示表格 ==========
                     df = pd.DataFrame.from_dict(matrix_dict, orient='index')
                     
                     # 定义样式
