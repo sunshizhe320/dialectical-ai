@@ -863,7 +863,7 @@ else:
                     import pandas as pd
                     from ai_agent import generate_response
                     
-                    # ========== 第1步：提取观点 ==========
+                    # ========== 调试：看观点提取结果 ==========
                     def extract_viewpoints(messages):
                         """调用 API 提取核心观点"""
                         if not messages or len(messages) < 2:
@@ -878,21 +878,13 @@ else:
                             if len(discussion) > 1500:
                                 discussion = discussion[:1500]
                             
-                            # API 调用：提取观点
                             prompt = f"""Analyze this discussion and extract 3-4 core viewpoints.
-For EACH viewpoint, provide:
-1. A short title (max 8 words)
-
-Be concise and clear.
+For EACH viewpoint, provide a short title (max 8 words).
 
 Discussion:
 {discussion}
 
-Return format:
-Viewpoint 1
-Viewpoint 2
-Viewpoint 3
-(only titles, one per line)"""
+Return format - only titles, one per line, no numbers."""
                             
                             response = generate_response(
                                 mode="Scaffolded",
@@ -901,6 +893,11 @@ Viewpoint 3
                                 user="System"
                             )
                             
+                            # ========== 调试输出 ==========
+                            st.write("**🔍 API 原始返回：**")
+                            st.code(response, language="text")
+                            st.write(f"长度：{len(response) if response else 0} 字符")
+                            
                             if response:
                                 viewpoints = []
                                 for line in response.split('\n'):
@@ -908,7 +905,6 @@ Viewpoint 3
                                     if not line or len(line) < 5 or len(line) > 50:
                                         continue
                                     
-                                    # 清理前缀
                                     cleaned = line
                                     for prefix in ['1.', '2.', '3.', '4.', '-', '•', 'Viewpoint']:
                                         if cleaned.startswith(prefix):
@@ -919,113 +915,22 @@ Viewpoint 3
                                             cleaned = cleaned[:22] + "..."
                                         viewpoints.append(cleaned)
                                 
+                                st.write(f"**✅ 解析后的观点：** {viewpoints}")
+                                
                                 if len(viewpoints) >= 3:
                                     return viewpoints[:4]
                         
                         except Exception as e:
+                            st.error(f"⚠️ 错误: {e}")
                             print(f"⚠️ 提取观点错误: {e}")
                         
                         return ["观点A", "观点B", "观点C"]
                     
-                    # ========== 第2步：获取观点 ==========
+                    # ========== 获取观点 ==========
                     with st.spinner("🤖 AI 正在提取观点..."):
                         core_viewpoints = extract_viewpoints(messages)
                     
-                    # ========== 第3步：为每个人分析态度 ==========
-                    def analyze_stance_by_ai(participant_name, participant_text, viewpoints_list):
-                        """调用 AI 分析该参与者对每个观点的态度"""
-                        
-                        if not participant_text.strip():
-                            return {vp: "△" for vp in viewpoints_list}
-                        
-                        try:
-                            # 构建 viewpoints 列表字符串
-                            viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(viewpoints_list)])
-                            
-                            # API 调用：分析态度
-                            prompt = f"""Analyze {participant_name}'s stance on each viewpoint.
-
-Viewpoints:
-{viewpoints_str}
-
-{participant_name}'s statements:
-{participant_text[:800]}
-
-For EACH viewpoint, determine if {participant_name}:
-- Agrees (✅)
-- Disagrees (❌)  
-- Neutral/Not mentioned (△)
-
-Return format:
-1. ✅
-2. ❌
-3. △
-(only symbols, one per line, in order)"""
-                            
-                            response = generate_response(
-                                mode="Scaffolded",
-                                user_message=prompt,
-                                group_id=st.session_state.session_id,
-                                user="System"
-                            )
-                            
-                            stances = {}
-                            if response:
-                                lines = response.split('\n')
-                                for i, viewpoint in enumerate(viewpoints_list):
-                                    if i < len(lines):
-                                        line = lines[i].strip()
-                                        # 提取符号
-                                        if '✅' in line:
-                                            stances[viewpoint] = "✅"
-                                        elif '❌' in line:
-                                            stances[viewpoint] = "❌"
-                                        else:
-                                            stances[viewpoint] = "△"
-                                    else:
-                                        stances[viewpoint] = "△"
-                            
-                            # 如果解析失败，返回默认值
-                            if not stances:
-                                return {vp: "△" for vp in viewpoints_list}
-                            
-                            return stances
-                        
-                        except Exception as e:
-                            print(f"⚠️ 分析态度错误: {e}")
-                            return {vp: "△" for vp in viewpoints_list}
-                    
-                    # ========== 第4步：构建矩阵 ==========
-                    matrix_dict = {}
-                    
-                    with st.spinner("🤖 AI 正在分析每个人的态度..."):
-                        for participant in participants:
-                            # 获取该参与者的所有消息
-                            participant_text = " ".join([
-                                m.get("message", "")
-                                for m in messages
-                                if m.get("user") == participant
-                            ])
-                            
-                            # 调用 AI 分析该人的态度
-                            stances = analyze_stance_by_ai(participant, participant_text, core_viewpoints)
-                            matrix_dict[participant] = stances
-                    
-                    # 创建 DataFrame
-                    df = pd.DataFrame.from_dict(matrix_dict, orient='index')
-                    
-                    # 定义样式
-                    def style_cells(val):
-                        if val == "✅":
-                            return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
-                        elif val == "❌":
-                            return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
-                        else:
-                            return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
-                    
-                    # 显示表格
-                    styled_df = df.style.applymap(style_cells)
-                    st.dataframe(styled_df, use_container_width=True, height=200)
+                    st.stop()  # 停止这里，只看调试信息
                 with tab2:
                     st.subheader("📈 Convergence Analysis")
                     
