@@ -853,18 +853,6 @@ if "session_id" in st.session_state and st.session_state.session_id:
     with tab1:
         st.write("### 📊 Consensus Matrix (coming soon)")
         st.info("💭 Consensus Matrix visualization will be available soon. Keep discussing to build more data!")
-        
+
             
-            with tab2:
-                if len(current_history) >= 2:
-                    render_voice_balance(current_history, current_participants)
-                else:
-                    st.info("💬 Need at least 2 messages to analyze voice balance")
-            
-            with tab3:
-                if len(current_history) >= 2:
-                    session_info_data = get_session_info(st.session_state.session_id)
-                    topic = session_info_data.get("topic", "") if session_info_data else ""
-                    render_viewpoint_evolution(current_history, current_participants, topic=topic)
-                else:
-                    st.info("💭 Need at least 2 messages to visualize viewpoint evolution")
+           
