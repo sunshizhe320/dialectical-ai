@@ -880,7 +880,7 @@ List each viewpoint on a new line:"""
                     # 调用 API
                     st.write("⏳ 调用 API...")
                     test_response = generate_response(
-                        mode="Control",
+                        mode="Scaffolded",  # 改成这个
                         user_message=test_prompt,
                         group_id="debug",
                         user="System"
