@@ -114,7 +114,7 @@ def add_participant(session_id, user_name):
     save_all_participants(all_participants)
 
 def get_session_participants(session_id):
-    """Get active participants"""
+    """Get active participants - always reload from file"""
     all_participants = load_all_participants()
     
     if session_id not in all_participants:
@@ -151,7 +151,7 @@ def save_message(session_id, user, role, message):
     print(f"✅ Message saved")
 
 def get_history(session_id, limit=100):
-    """Get conversation history"""
+    """Get conversation history - always read fresh from file"""
     all_sessions = load_all_sessions()
     
     if session_id not in all_sessions:
@@ -348,12 +348,13 @@ if "session_started" not in st.session_state:
 if "session_start_time" not in st.session_state:
     st.session_state.session_start_time = None
 
-# Auto-refresh to synchronize across devices
+# ✅ Auto-refresh to synchronize across devices - FASTER REFRESH (1 second)
 if st.session_state.session_started:
     if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = datetime.now()
     
-    if (datetime.now() - st.session_state.last_refresh).seconds > 2:
+    # 每 1 秒自动刷新一次以保证实时同步
+    if (datetime.now() - st.session_state.last_refresh).total_seconds() > 1.0:
         st.session_state.last_refresh = datetime.now()
         st.rerun()
 
@@ -555,9 +556,9 @@ else:
         mode = session_info.get("mode", "Control")
         mode_info = MODE_OPTIONS.get(mode, {})
         
+        # ✅ FORCE RELOAD: Always read fresh data from files
         add_participant(st.session_state.session_id, st.session_state.user_name)
         current_participants = get_session_participants(st.session_state.session_id)
-        
         current_history = get_history(st.session_state.session_id, limit=500)
         
         # Sidebar
