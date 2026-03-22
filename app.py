@@ -8,9 +8,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from ai_agent import generate_response, generate_argument_map
-from discourse_analysis import analyzer
-
-load_dotenv()
 
 st.set_page_config(
     page_title="Dialectical AI Partner",
