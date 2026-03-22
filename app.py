@@ -861,9 +861,13 @@ else:
                     st.subheader("📊 Consensus Matrix")
                     
                     import pandas as pd
+                    from ai_agent import extract_viewpoints
                     
-                    # 使用固定的观点（因为 API 调用有问题）
-                    core_viewpoints = ["观点A", "观点B", "观点C"]
+                    # 调用 API 提取真实观点
+                    with st.spinner("🤖 AI 正在分析讨论内容..."):
+                        core_viewpoints = extract_viewpoints(messages)
+                    
+                    st.success(f"✅ 已提取 {len(core_viewpoints)} 个核心观点")
                     
                     # 构建矩阵
                     matrix_data = []
@@ -915,7 +919,6 @@ else:
                     
                     # 简洁的图例
                     st.markdown("**Legend:** ✅ Agree (赞成)  |  ❌ Disagree (反对)  |  △ Neutral (中立)")
-                    
                 with tab2:
                     st.subheader("📈 Convergence Analysis")
                     
