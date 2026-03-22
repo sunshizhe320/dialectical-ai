@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
+from plotly import graph_objects as go
 
 def render_consensus_matrix(messages, participants):
     """
@@ -13,7 +13,7 @@ def render_consensus_matrix(messages, participants):
     
     st.markdown("## 📊 **Consensus Matrix (共识热力图)**")
     
-    # 自动提取关键观点
+    # 自动提取���键观点
     viewpoints = extract_key_viewpoints(messages)
     
     if not viewpoints:
@@ -145,7 +145,7 @@ def extract_key_viewpoints(messages):
 
 
 def classify_stance(participant, viewpoint, messages):
-    """判断参与者对某观点的立场"""
+    """判断参与者对���观点的立场"""
     
     participant_messages = [m for m in messages if m.get('user') == participant]
     
