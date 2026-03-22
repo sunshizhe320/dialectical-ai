@@ -774,4 +774,198 @@ else:
         if clear_btn:
             st.rerun()
         
-     
+            if clear_btn:
+              st.rerun()
+        
+        # ========== Analysis Sections ==========
+        st.divider()
+        st.markdown("## 📊 Analysis & Consensus Matrix")
+        
+        if "session_id" in st.session_state and st.session_state.session_id:
+            all_data = load_all_sessions()
+            current_sess = all_data.get(st.session_state.session_id, {})
+            messages = current_sess.get("messages", [])
+            participants = get_session_participants(st.session_state.session_id)
+            
+            # 只有在有足够数据时才显示
+            if len(messages) >= 3 and len(participants) >= 2:
+                
+                # ========== 提取核心观点 ==========
+                def extract_core_arguments(messages):
+                    """从讨论中提取核心论点"""
+                    arguments = []
+                    
+                    for msg in messages:
+                        text = msg.get("message", "").lower()
+                        
+                        # 检测论点关键词
+                        if any(kw in text for kw in ['观点', '论点', 'argument', 'point']):
+                            # 简单提取：使用消息的第一句话
+                            sentences = msg.get("message", "").split("。")
+                            if sentences[0]:
+                                arg = sentences[0][:50]  # 只取前50个字符
+                                if arg not in arguments and len(arg) > 5:
+                                    arguments.append(arg)
+                    
+                    # 如果没有提取到，生成通用论点
+                    if not arguments:
+                        arguments = ["观点A", "观点B", "观点C"]
+                    
+                    return arguments[:4]  # 最多4个观点
+                
+                core_arguments = extract_core_arguments(messages)
+                
+                # ========== 构建共识矩阵 ==========
+                def build_consensus_matrix(participants, messages, arguments):
+                    """构建共识矩阵"""
+                    import pandas as pd
+                    
+                    matrix_data = []
+                    
+                    for participant in participants:
+                        row = {}
+                        for arg in arguments:
+                            # 获取该参与者对该论点的立场
+                            stance = "△"  # 默认中立
+                            
+                            # 查找该参与者的所有消息
+                            participant_msgs = [m.get("message", "").lower() for m in messages if m.get("user") == participant]
+                            combined_text = " ".join(participant_msgs)
+                            
+                            # 检查是否提到该论点
+                            if arg.lower() in combined_text:
+                                # 检查赞成/反对的关键词
+                                if any(w in combined_text for w in ['赞成', '同意', '支持', '对', 'agree', 'yes', '+1']):
+                                    stance = "✅"
+                                elif any(w in combined_text for w in ['反对', '不同意', '反驳', 'disagree', 'no', '-1']):
+                                    stance = "❌"
+                            
+                            row[arg] = stance
+                        
+                        matrix_data.append(row)
+                    
+                    return pd.DataFrame(matrix_data, index=participants)
+                
+                # ========== 显示标签页 ==========
+                tab1, tab2, tab3 = st.tabs(["📊 Consensus Matrix", "📈 Convergence Analysis", "💬 Mutual Feedback"])
+                
+                with tab1:
+                    st.subheader("📊 Consensus Matrix")
+                    
+                    df = build_consensus_matrix(participants, messages, core_arguments)
+                    
+                    # 美化样式
+                    def color_cells(val):
+                        if val == "✅":
+                            return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 16px;'
+                        elif val == "❌":
+                            return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 16px;'
+                        else:
+                            return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px;'
+                    
+                    styled_df = df.style.applymap(color_cells)
+                    st.dataframe(styled_df, use_container_width=True)
+                    
+                    st.divider()
+                    st.markdown("**Legend:**")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.markdown("✅ **Agree (赞成)**")
+                    with col2:
+                        st.markdown("❌ **Disagree (反对)**")
+                    with col3:
+                        st.markdown("△ **Neutral/Not mentioned (中立)**")
+                
+                with tab2:
+                    st.subheader("📈 Convergence Analysis")
+                    
+                    # 计算收敛度
+                    convergence_data = {}
+                    for arg in core_arguments:
+                        stances = [df.loc[p, arg] for p in participants if p in df.index]
+                        agree_count = sum(1 for s in stances if s == "✅")
+                        convergence_data[arg] = {
+                            "agree": agree_count,
+                            "total": len(stances),
+                            "rate": agree_count / len(stances) if stances else 0
+                        }
+                    
+                    # 总体收敛度
+                    total_agree = sum(d["agree"] for d in convergence_data.values())
+                    total_votes = sum(d["total"] for d in convergence_data.values())
+                    overall_rate = total_agree / total_votes if total_votes > 0 else 0
+                    
+                    st.markdown(f"### 🎯 Overall Consensus: {overall_rate*100:.1f}%")
+                    st.progress(overall_rate)
+                    
+                    st.divider()
+                    
+                    st.markdown("**Breakdown by Viewpoint:**")
+                    for arg, data in convergence_data.items():
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            st.write(arg)
+                        with col2:
+                            rate = data["rate"]
+                            st.progress(rate, f"{data['agree']}/{data['total']}")
+                    
+                    st.divider()
+                    
+                    # 根据收敛度给出建议
+                    st.markdown("### 💡 Guidance")
+                    if overall_rate >= 0.9:
+                        st.success("🎉 Excellent! Your group has achieved strong consensus. Well done!")
+                    elif overall_rate >= 0.6:
+                        st.info("🔄 Good progress! Consider one more round to address remaining disagreements.")
+                    elif overall_rate >= 0.3:
+                        st.warning("⚠️ Significant differences remain. Continue deep discussion to build bridges.")
+                    else:
+                        st.error("❌ Major disagreement. Use Comments on each other to understand different perspectives.")
+                
+                with tab3:
+                    st.subheader("💬 Mutual Feedback & Next Steps")
+                    
+                    st.markdown("""
+                    ### 🎯 How to Build on Each Other's Ideas:
+                    
+                    **1. Comments on Each Other (互评)**
+                    - Ask clarifying questions about others' viewpoints
+                    - Share what you agree with in others' perspectives
+                    - Example: "我同意你的观点，但我想补充..."
+                    
+                    **2. Express Your Stance (立场表达)**
+                    - Use clear language: "我赞成/反对..."
+                    - Provide reasons and evidence
+                    - Example: "我反对这个观点，因为..."
+                    
+                    **3. Build Consensus (构建共识)**
+                    - Find common ground between different viewpoints
+                    - Propose compromises or integrated solutions
+                    - Example: "也许我们可以..."
+                    
+                    ### 📊 Current Status:
+                    """)
+                    
+                    # 显示现在的共识情况
+                    agree_points = [arg for arg, data in convergence_data.items() if data["rate"] == 1.0]
+                    disagree_points = [arg for arg, data in convergence_data.items() if data["rate"] == 0]
+                    
+                    if agree_points:
+                        st.success(f"✅ **Full Consensus on:** {', '.join(agree_points)}")
+                    
+                    if disagree_points:
+                        st.error(f"❌ **Major Disagreement on:** {', '.join(disagree_points)}")
+                    
+                    # AI建议
+                    st.markdown("""
+                    ### 🤖 AI Suggestions for Deeper Discussion:
+                    """)
+                    
+                    st.markdown("""
+                    - **For Points with Full Consensus:** Solidify your agreement by explaining WHY you all agree
+                    - **For Disagreement:** Use @AI to ask for perspective from the other side
+                    - **For Neutral Points:** Share concrete examples or evidence to clarify your position
+                    """)
+            
+            else:
+                st.info(f"💭 **Waiting for more data...** \n\nConsensus Matrix will appear when you have:\n- At least 2 participants (current: {len(participants)})\n- At least 3 messages (current: {len(messages)})\n\nKeep discussing!")
