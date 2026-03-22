@@ -8,8 +8,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from ai_agent import generate_response, generate_argument_map
-from consensus_matrix import render_consensus_matrix  
 from discussion_analytics import render_voice_balance, render_viewpoint_evolution
+
+# 尝试导入新模块，如果不存在则跳过
+try:
+    from ai_scaffolding import classify_message_type, generate_scaffolding_questions, extract_core_viewpoints
+except:
+    classify_message_type = None
 
 st.set_page_config(
     page_title="Dialectical AI Partner",
@@ -62,12 +67,10 @@ def get_or_create_session(team_name, topic, mode, created_by):
     """Get or create session - include mode in session ID"""
     all_sessions = load_all_sessions()
     
-    # 规范化输入以确保完全匹配
     team_name = team_name.strip()
     topic = topic.strip()
     mode = mode.strip()
     
-    # 检查是否存在相同的 session
     for sid, info in all_sessions.items():
         existing_team = info.get("team_name", "").strip()
         existing_topic = info.get("topic", "").strip()
@@ -77,12 +80,8 @@ def get_or_create_session(team_name, topic, mode, created_by):
             existing_topic == topic and 
             existing_mode == mode):
             print(f"✅ Found existing session: {sid}")
-            print(f"  Team: {existing_team}")
-            print(f"  Topic: {existing_topic[:50]}...")
-            print(f"  Mode: {existing_mode}")
             return sid
     
-    # 创建新 session
     topic_short = topic.replace('?', '').replace('？', '')[:20]
     session_id = f"{team_name}_{topic_short}_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
@@ -96,10 +95,6 @@ def get_or_create_session(team_name, topic, mode, created_by):
     }
     
     save_all_sessions(all_sessions)
-    print(f"✅ Created new session: {session_id}")
-    print(f"  Team: {team_name}")
-    print(f"  Topic: {topic[:50]}...")
-    print(f"  Mode: {mode}")
     return session_id
 
 def add_participant(session_id, user_name):
@@ -113,7 +108,7 @@ def add_participant(session_id, user_name):
     save_all_participants(all_participants)
 
 def get_session_participants(session_id):
-    """Get active participants - always reload from file"""
+    """Get active participants"""
     all_participants = load_all_participants()
     
     if session_id not in all_participants:
@@ -132,11 +127,10 @@ def get_session_participants(session_id):
     return active
 
 def save_message(session_id, user, role, message):
-    """Save message - synchronize to file"""
+    """Save message"""
     all_sessions = load_all_sessions()
     
     if session_id not in all_sessions:
-        print(f"❌ Session does not exist: {session_id}")
         return
     
     all_sessions[session_id]["messages"].append({
@@ -147,10 +141,9 @@ def save_message(session_id, user, role, message):
     })
     
     save_all_sessions(all_sessions)
-    print(f"✅ Message saved")
 
 def get_history(session_id, limit=100):
-    """Get conversation history - always read fresh from file"""
+    """Get conversation history"""
     all_sessions = load_all_sessions()
     
     if session_id not in all_sessions:
@@ -347,12 +340,11 @@ if "session_started" not in st.session_state:
 if "session_start_time" not in st.session_state:
     st.session_state.session_start_time = None
 
-# ✅ Auto-refresh to synchronize across devices - FASTER REFRESH (1 second)
+# Auto-refresh
 if st.session_state.session_started:
     if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = datetime.now()
     
-    # 每 1 秒自动刷新一次以保证实时同步
     if (datetime.now() - st.session_state.last_refresh).total_seconds() > 1.0:
         st.session_state.last_refresh = datetime.now()
         st.rerun()
@@ -378,8 +370,6 @@ MODE_OPTIONS = {
 
 def stream_ai_response(ai_reply, placeholder_container):
     """Stream AI response"""
-    
-    # Check if ai_reply is empty
     if not ai_reply:
         placeholder_container.markdown("""
         <div class="ai-bubble">
@@ -520,7 +510,6 @@ if not st.session_state.session_started:
             elif not consent:
                 st.error("❌ Please agree to participate in this research")
             else:
-                # Create or get session
                 session_id = get_or_create_session(
                     team_name=team_name.strip(),
                     topic=topic.strip(),
@@ -555,7 +544,6 @@ else:
         mode = session_info.get("mode", "Control")
         mode_info = MODE_OPTIONS.get(mode, {})
         
-        # ✅ FORCE RELOAD: Always read fresh data from files
         add_participant(st.session_state.session_id, st.session_state.user_name)
         current_participants = get_session_participants(st.session_state.session_id)
         current_history = get_history(st.session_state.session_id, limit=500)
@@ -646,7 +634,7 @@ else:
                         "text/csv"
                     )
         
-        # ===== Main Area =====
+        # Main Area
         st.markdown(f"## 💬 {team_name} Discussion")
         
         members_str = ", ".join(current_participants) if current_participants else "No members"
@@ -665,7 +653,7 @@ else:
         progress = min(len(current_history) / 40, 1.0)
         st.progress(progress, f"📊 {len(current_history)} messages")
         
-        # ========== Discussion History ==========
+        # Discussion History
         st.markdown("### 💬 Discussion History")
         
         history = get_history(st.session_state.session_id, limit=500)
@@ -684,7 +672,6 @@ else:
                     time_str = ""
                 
                 if role == "assistant" or user == "AI":
-                    # AI消息
                     col1, col2 = st.columns([0.08, 0.92])
                     with col2:
                         st.markdown(f"""
@@ -697,13 +684,11 @@ else:
                         </div>
                         """, unsafe_allow_html=True)
                 else:
-                    # 用户消息（简化版，不显示AI标签）
                     col1, col2 = st.columns([0.92, 0.08])
                     with col1:
                         is_self = user == st.session_state.user_name
                         has_ai_mention = "@AI" in content or "@ai" in content or "＠AI" in content
                         
-                        # 构建简化的HTML气泡
                         bubble_html = f"""
                         <div class="student-bubble" style="{'border: 2px solid #ff9800;' if has_ai_mention else ''}">
                             <div class="bubble-header">
@@ -718,7 +703,7 @@ else:
         else:
             st.info("💭 Start discussing!")
         
-        # ========== Message Input ==========
+        # Message Input
         st.markdown("### ✏️ Your Message")
         
         col1, col2, col3 = st.columns([0.72, 0.14, 0.14])
@@ -739,7 +724,7 @@ else:
             st.write("")
             clear_btn = st.button("🗑️ Clear", use_container_width=True)
         
-        # ===== Handle Send =====
+        # Handle Send
         if send_btn:
             if user_input.strip():
                 save_message(
@@ -767,7 +752,6 @@ else:
                             )
                             
                             if ai_reply:
-                                # Save message
                                 save_message(
                                     st.session_state.session_id, 
                                     "AI", 
@@ -775,7 +759,6 @@ else:
                                     ai_reply
                                 )
                                 
-                                # Display reply
                                 ai_placeholder = st.empty()
                                 stream_ai_response(ai_reply, ai_placeholder)
                             else:
@@ -791,19 +774,4 @@ else:
         if clear_btn:
             st.rerun()
         
-        # ========== Analysis Sections ==========
-st.divider()
-
-if "session_id" in st.session_state and st.session_state.session_id:
-    tab1, tab2, tab3 = st.tabs(["📊 Consensus Matrix", "🎙️ Voice Balance", "📈 Viewpoint Evolution"])
-    
-    with tab1:
-        all_data = load_all_sessions()
-        current_sess = all_data.get(st.session_state.session_id, {})
-        messages = current_sess.get("messages", [])
-        participants = get_session_participants(st.session_state.session_id)
-        
-        if len(messages) > 2 and len(participants) > 1:
-            render_consensus_matrix(messages, participants)
-        else:
-            st.info("💭 Need at least 2 different participants with 2+ messages")
+     
