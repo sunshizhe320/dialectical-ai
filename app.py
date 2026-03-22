@@ -879,7 +879,7 @@ else:
                             if len(discussion) > 1500:
                                 discussion = discussion[:1500]
                             
-                            # 调用 API（用 Scaffolded 模式）
+                            # 调用 API
                             prompt = f"""Extract 3-4 key viewpoints from this discussion. 
 Each viewpoint must be SHORT (max 12 words, aim for 6-8 words).
 Make them concise and clear.
@@ -901,18 +901,15 @@ List each viewpoint on a new line, no numbers or bullets:"""
                                 for line in response.split('\n'):
                                     line = line.strip()
                                     
-                                    # 跳过空行和太短/太长的内容
                                     if not line or len(line) < 5 or len(line) > 50:
                                         continue
                                     
-                                    # 移除开头数字
                                     cleaned = line
                                     for prefix in ['1.', '2.', '3.', '4.', '-', '•']:
                                         if cleaned.startswith(prefix):
                                             cleaned = cleaned[len(prefix):].strip()
                                             break
                                     
-                                    # 限制长度到 30 字符
                                     if cleaned and len(cleaned) >= 5:
                                         if len(cleaned) > 30:
                                             cleaned = cleaned[:27] + "..."
@@ -930,6 +927,44 @@ List each viewpoint on a new line, no numbers or bullets:"""
                     with st.spinner("🤖 AI 正在分析讨论内容..."):
                         core_viewpoints = extract_viewpoints_local(messages)
                     
+                    # ========== 检测每个人对每个观点的态度 ==========
+                    def detect_stance(participant_text, viewpoint_text):
+                        """更智能的态度检测"""
+                        
+                        # 将观点和讨论都转为小写
+                        p_text = participant_text.lower()
+                        v_text = viewpoint_text.lower()
+                        
+                        # 赞成关键词
+                        agree_words = [
+                            '赞成', '同意', '支持', '对', '正确', '有道理', '好',
+                            'agree', 'support', 'yes', 'beneficial', 'good', 'positive',
+                            'should', 'can be', 'can help'
+                        ]
+                        
+                        # 反对关键词
+                        disagree_words = [
+                            '反对', '不同意', '反驳', '错误', '不对', '不然', '问题', '风险',
+                            'disagree', 'no', 'concern', 'problem', 'risk', 'issue',
+                            'should not', 'cannot', 'worried', 'concern about'
+                        ]
+                        
+                        # 如果观点本身含有反对词汇（如"privacy concerns"），
+                        # 赞同这个观点就是赞成有这个问题
+                        viewpoint_has_concern = any(w in v_text for w in ['concern', 'problem', 'risk', 'issue', '问题', '风险'])
+                        
+                        # 检测参与者是否提到了相关的观点内容
+                        has_agree = any(w in p_text for w in agree_words)
+                        has_disagree = any(w in p_text for w in disagree_words)
+                        
+                        # 判断立场
+                        if has_agree and not has_disagree:
+                            return "✅"  # 赞成
+                        elif has_disagree and not has_agree:
+                            return "❌"  # 反对
+                        else:
+                            return "△"  # 中立
+                    
                     # ========== 构建矩阵 ==========
                     matrix_data = []
                     
@@ -940,27 +975,15 @@ List each viewpoint on a new line, no numbers or bullets:"""
                             for m in messages
                             if m.get("user") == participant
                         ]
-                        participant_text = " ".join(participant_messages).lower()
+                        participant_text = " ".join(participant_messages)
                         
                         for viewpoint in core_viewpoints:
-                            stance = "△"
-                            
-                            agree_keywords = ['赞成', '同意', '支持', 'agree', 'yes', 'beneficial', 'support']
-                            disagree_keywords = ['反对', '不同意', 'disagree', 'no', 'concerns', 'problem']
-                            
-                            has_agree = any(kw in participant_text for kw in agree_keywords)
-                            has_disagree = any(kw in participant_text for kw in disagree_keywords)
-                            
-                            if has_agree and not has_disagree:
-                                stance = "✅"
-                            elif has_disagree and not has_agree:
-                                stance = "❌"
-                            
+                            stance = detect_stance(participant_text, viewpoint)
                             row[viewpoint] = stance
                         
                         matrix_data.append(row)
                     
-                    # 创建 DataFrame（确保列名正确）
+                    # 创建 DataFrame
                     if matrix_data:
                         df = pd.DataFrame(matrix_data, index=participants)
                         
@@ -976,13 +999,6 @@ List each viewpoint on a new line, no numbers or bullets:"""
                         # 显示表格
                         styled_df = df.style.applymap(style_cells)
                         st.dataframe(styled_df, use_container_width=True, height=200)
-                        
-                        st.divider()
-                        
-                        # 图例
-                        st.markdown("**Legend:** ✅ Agree (赞成)  |  ❌ Disagree (反对)  |  △ Neutral (中立)")
-                    else:
-                        st.warning("⚠️ 无法构建矩阵，请确保有讨论数据")
                 with tab2:
                     st.subheader("📈 Convergence Analysis")
                     
