@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from plotly import graph_objects as go
+import plotly.graph_objects as go  # ✅ 改回原来的方式
 
 def render_consensus_matrix(messages, participants):
     """
@@ -13,7 +13,7 @@ def render_consensus_matrix(messages, participants):
     
     st.markdown("## 📊 **Consensus Matrix (共识热力图)**")
     
-    # 自动提取���键观点
+    # 自动提取关键观点
     viewpoints = extract_key_viewpoints(messages)
     
     if not viewpoints:
@@ -25,9 +25,8 @@ def render_consensus_matrix(messages, participants):
     for participant in participants:
         row = []
         for viewpoint in viewpoints:
-            # 通过规则判断该参与者是否支持该观点
             stance = classify_stance(participant, viewpoint, messages)
-            row.append(stance)  # ✓ / × / △
+            row.append(stance)
         matrix_data.append(row)
     
     # 创建dataframe
@@ -37,19 +36,18 @@ def render_consensus_matrix(messages, participants):
         columns=[vp[:15] + "..." if len(vp) > 15 else vp for vp in viewpoints]
     )
     
-    # 方法A: 表格化呈现
+    # 表格化呈现
     st.write("### 观点同意度矩阵")
     col1, col2 = st.columns([3, 1])
     
     with col1:
-        # 用颜色编码
         def color_stance(val):
             if val == "✓":
-                return 'background-color: #90EE90'  # 绿色=同意
+                return 'background-color: #90EE90'
             elif val == "×":
-                return 'background-color: #FFB6C6'  # 红色=不同意
+                return 'background-color: #FFB6C6'
             else:
-                return 'background-color: #FFE4B5'  # 黄色=中立
+                return 'background-color: #FFE4B5'
         
         styled_df = df_matrix.style.map(color_stance)
         st.dataframe(styled_df, use_container_width=True)
@@ -60,10 +58,9 @@ def render_consensus_matrix(messages, participants):
         st.markdown("🔴 × = 不同意")
         st.markdown("🟡 △ = 中立/未表态")
     
-    # 方法B: 热力图（更炫酷）
+    # 热力图
     st.write("### 热力图视图")
     
-    # 转换为数值（便于热力图）
     matrix_numeric = df_matrix.replace({
         '✓': 1,
         '△': 0,
@@ -74,7 +71,7 @@ def render_consensus_matrix(messages, participants):
         z=matrix_numeric.values,
         x=matrix_numeric.columns,
         y=matrix_numeric.index,
-        colorscale='RdYlGn',  # 红-黄-绿
+        colorscale='RdYlGn',
         zmid=0,
         text=df_matrix.values,
         texttemplate='%{text}',
@@ -97,13 +94,15 @@ def render_consensus_matrix(messages, participants):
     
     # 统计数据
     st.write("### 共识度分析")
-    consensus_score = (matrix_numeric == 1).sum().sum() / matrix_numeric.size
-    disagreement_score = (matrix_numeric == -1).sum().sum() / matrix_numeric.size
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("共识度", f"{consensus_score*100:.1f}%", "✓")
-    col2.metric("分歧度", f"{disagreement_score*100:.1f}%", "×")
-    col3.metric("中立度", f"{(1-consensus_score-disagreement_score)*100:.1f}%", "△")
+    if matrix_numeric.size > 0:
+        consensus_score = (matrix_numeric == 1).sum().sum() / matrix_numeric.size
+        disagreement_score = (matrix_numeric == -1).sum().sum() / matrix_numeric.size
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("共识度", f"{consensus_score*100:.1f}%", "✓")
+        col2.metric("分歧度", f"{disagreement_score*100:.1f}%", "×")
+        col3.metric("中立度", f"{(1-consensus_score-disagreement_score)*100:.1f}%", "△")
 
 
 def extract_key_viewpoints(messages):
@@ -112,7 +111,6 @@ def extract_key_viewpoints(messages):
     if not messages:
         return []
     
-    # 简化版：提取常见关键词作为观点
     viewpoints = set()
     
     keywords_map = {
@@ -133,7 +131,6 @@ def extract_key_viewpoints(messages):
                 viewpoints.add(viewpoint)
     
     if not viewpoints:
-        # 默认观点
         viewpoints = {
             "算法是主要原因",
             "人类偏见很重要",
@@ -141,29 +138,26 @@ def extract_key_viewpoints(messages):
             "教育可以帮助"
         }
     
-    return list(viewpoints)[:4]  # 取前4个
+    return list(viewpoints)[:4]
 
 
 def classify_stance(participant, viewpoint, messages):
-    """判断参与者对���观点的立场"""
+    """判断参与者对某观点的立场"""
     
     participant_messages = [m for m in messages if m.get('user') == participant]
     
     if not participant_messages:
         return '△'
     
-    # 简单规则：计算支持/反对的词频
     support_count = 0
     oppose_count = 0
     
     for m in participant_messages:
         content = m.get('message', '').lower()
         
-        # 支持的关键词
         if any(word in content for word in ['同意', '支持', '赞同', '确实', '是的', '对', 'agree', 'yes', 'support']):
             support_count += 1
         
-        # 反对的关键词
         if any(word in content for word in ['不同意', '反对', '否则', '反而', '但是', 'disagree', 'no', 'oppose']):
             oppose_count += 1
     
