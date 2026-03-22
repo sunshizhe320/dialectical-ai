@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from ai_agent import generate_response, generate_argument_map
-from discussion_analytics import render_voice_balance, render_viewpoint_evolution
+
 
 # 尝试导入新模块，如果不存在则跳过
 try:
