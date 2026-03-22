@@ -857,32 +857,212 @@ else:
                 # ========== 显示标签页 ==========
                 tab1, tab2, tab3 = st.tabs(["📊 Consensus Matrix", "📈 Convergence Analysis", "💬 Mutual Feedback"])
                 
-                with tab1:
+                                with tab1:
                     st.subheader("📊 Consensus Matrix")
                     
-                    df = build_consensus_matrix(participants, messages, core_arguments)
+                    # ========== 步骤1：调用 API 提取观点 ==========
+                    def extract_viewpoints_from_api(messages, mode):
+                        """调用现有 API 从讨论中提取核心观点"""
+                        try:
+                            from ai_agent import generate_response
+                            
+                            # 准备讨论文本
+                            discussion = "\n".join([
+                                f"{m.get('user', 'Unknown')}: {m.get('message', '')}"
+                                for m in messages[-12:]  # 最近12条消息
+                            ])
+                            
+                            # 限制长度
+                            if len(discussion) > 2000:
+                                discussion = discussion[:2000]
+                            
+                            # 精确的提示词，要求 AI 生成多个观点
+                            prompt = """请分析下面的讨论，总结出3-4个核心观点。
+每个观点用一句话表达（不超过15字），代表讨论中的不同立场或主要观点。
+
+讨论内容：
+{}
+
+请按如下格式返回，每行一个观点：
+观点1
+观点2
+观点3
+观点4""".format(discussion)
+                            
+                            # 调用 API
+                            response = generate_response(
+                                mode=mode,
+                                user_input=prompt,
+                                group_id=st.session_state.session_id,
+                                user="System",
+                                conversation_history=messages[-3:]
+                            )
+                            
+                            if response:
+                                # 解析响应，提取观点
+                                viewpoints = []
+                                for line in response.split('\n'):
+                                    line = line.strip()
+                                    
+                                    # 移除空行
+                                    if not line:
+                                        continue
+                                    
+                                    # 移除开头的数字、标记符
+                                    cleaned = line
+                                    for prefix in ['1.', '2.', '3.', '4.', '1、', '2、', '3、', '4、',
+                                                   '①', '②', '③', '④', '•', '-', '·']:
+                                        if cleaned.startswith(prefix):
+                                            cleaned = cleaned[len(prefix):].strip()
+                                            break
+                                    
+                                    # 保留有内容的行（中文或英文，长度 3-30）
+                                    if cleaned and len(cleaned) >= 3 and len(cleaned) <= 30:
+                                        viewpoints.append(cleaned)
+                                
+                                # 返回前4个观点
+                                if len(viewpoints) >= 3:
+                                    return viewpoints[:4]
+                            
+                        except Exception as e:
+                            st.warning(f"⚠️ Failed to extract viewpoints: {e}")
+                        
+                        # 备用默认观点
+                        return ["Viewpoint A", "Viewpoint B", "Viewpoint C"]
                     
-                    # 美化样式
-                    def color_cells(val):
-                        if val == "✅":
-                            return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 16px;'
-                        elif val == "❌":
-                            return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 16px;'
-                        else:
-                            return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px;'
+                    # 获取观点（带加载指示）
+                    with st.spinner("🤖 AI is analyzing discussion and extracting viewpoints..."):
+                        core_viewpoints = extract_viewpoints_from_api(messages, mode)
                     
-                    styled_df = df.style.applymap(color_cells)
-                    st.dataframe(styled_df, use_container_width=True)
+                    # 显示提取的观点
+                    st.success(f"✅ Extracted {len(core_viewpoints)} core viewpoints from the discussion")
+                    st.markdown("**AI-Summarized Viewpoints:**")
+                    for i, vp in enumerate(core_viewpoints, 1):
+                        st.caption(f"{i}. {vp}")
                     
                     st.divider()
+                    
+                    # ========== 步骤2：构建共识矩阵 ==========
+                    import pandas as pd
+                    
+                    # 初始化矩阵数据
+                    matrix_data = []
+                    
+                    for participant in participants:
+                        row = {}
+                        
+                        # 获取该参与者的所有消息
+                        participant_messages = [
+                            m.get("message", "")
+                            for m in messages
+                            if m.get("user") == participant
+                        ]
+                        participant_text = " ".join(participant_messages).lower()
+                        
+                        # 对每个观点判断参与者的态度
+                        for viewpoint in core_viewpoints:
+                            # 默认：中立 △
+                            stance = "△"
+                            
+                            # 赞成的关键词
+                            agree_keywords = [
+                                '赞成', '同意', '支持', '对', '对的', '正确', '有道理',
+                                'agree', 'yes', 'support', 'correct', 'right', 'true',
+                                '确实', '不错', '好的', '我同意', '+1', 'absolutely'
+                            ]
+                            
+                            # 反对的关键词
+                            disagree_keywords = [
+                                '反对', '不同意', '反驳', '错误', '不对', '不然',
+                                'disagree', 'no', 'wrong', 'false', 'incorrect',
+                                '不正确', '我反对', '-1', 'no way', '不支持'
+                            ]
+                            
+                            # 检测关键词
+                            has_agree = any(kw in participant_text for kw in agree_keywords)
+                            has_disagree = any(kw in participant_text for kw in disagree_keywords)
+                            
+                            # 判断立场
+                            if has_agree and not has_disagree:
+                                stance = "✅"  # 赞成
+                            elif has_disagree and not has_agree:
+                                stance = "❌"  # 反对
+                            # else: 保持 △（中立）
+                            
+                            row[viewpoint] = stance
+                        
+                        matrix_data.append(row)
+                    
+                    # 创建 DataFrame（纵轴=参与者，横轴=观点）
+                    df = pd.DataFrame(matrix_data, index=participants)
+                    
+                    # ========== 步骤3：美化和显示 ==========
+                    
+                    # 处理长列名（缩写）
+                    display_columns = []
+                    column_full_names = {}  # 保存缩写到完整名称的映射
+                    
+                    for col in df.columns:
+                        if len(col) > 12:
+                            # 超过12字符则缩写
+                            abbreviated = col[:10] + "..."
+                            display_columns.append(abbreviated)
+                            column_full_names[abbreviated] = col
+                        else:
+                            display_columns.append(col)
+                            column_full_names[col] = col
+                    
+                    df.columns = display_columns
+                    
+                    # 定义颜色函数
+                    def style_cells(val):
+                        """对不同的立场值应用不同颜色"""
+                        if val == "✅":
+                            # 赞成：绿色
+                            return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center; padding: 10px;'
+                        elif val == "❌":
+                            # 反对：红色
+                            return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center; padding: 10px;'
+                        else:
+                            # 中立：黄色
+                            return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center; padding: 10px;'
+                    
+                    # 应用样式
+                    styled_df = df.style.applymap(style_cells)
+                    
+                    # 显示矩阵
+                    st.dataframe(styled_df, use_container_width=True, height=200)
+                    
+                    st.divider()
+                    
+                    # 显示缩写说明（如果有的话）
+                    abbreviated_cols = {k: v for k, v in column_full_names.items() if k != v}
+                    if abbreviated_cols:
+                        st.markdown("**Full Viewpoint Names:**")
+                        for short, full in abbreviated_cols.items():
+                            st.caption(f"• {short} → {full}")
+                    
+                    st.divider()
+                    
+                    # 图例说明
                     st.markdown("**Legend:**")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.markdown("✅ **Agree (赞成)**")
-                    with col2:
-                        st.markdown("❌ **Disagree (反对)**")
-                    with col3:
-                        st.markdown("△ **Neutral/Not mentioned (中立)**")
+                    col_leg1, col_leg2, col_leg3 = st.columns(3)
+                    with col_leg1:
+                        st.markdown("**✅ Agree** (赞成)")
+                    with col_leg2:
+                        st.markdown("**❌ Disagree** (反对)")
+                    with col_leg3:
+                        st.markdown("**△ Neutral** (中立/未表达)")
+                    
+                    st.divider()
+                    
+                    # 矩阵说明
+                    st.info("""
+                    **How to read this matrix:**
+                    - **Rows (纵轴):** Participants' names
+                    - **Columns (横轴):** Core viewpoints extracted from discussion
+                    - **Cells (单元格):** Each participant's stance on each viewpoint
+                    """)
                 
                 with tab2:
                     st.subheader("📈 Convergence Analysis")
