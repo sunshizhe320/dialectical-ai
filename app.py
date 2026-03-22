@@ -863,36 +863,118 @@ else:
                     import pandas as pd
                     from ai_agent import generate_response
                     
-                    # ========== 调试代码 ==========
-                    st.info("🔍 **调试模式：测试 API 响应**")
-                    
-                    test_prompt = """Extract 3-4 key viewpoints from this discussion:
+                    # ========== 提取观点函数 ==========
+                    def extract_viewpoints_local(messages):
+                        """从讨论中提取核心观点"""
+                        if not messages or len(messages) < 2:
+                            return ["观点A", "观点B", "观点C"]
+                        
+                        try:
+                            # 准备讨论文本
+                            discussion = "\n".join([
+                                f"{m.get('user', 'Unknown')}: {m.get('message', '')}"
+                                for m in messages[-10:]
+                            ])
+                            
+                            if len(discussion) > 1500:
+                                discussion = discussion[:1500]
+                            
+                            # 调用 API（用 Scaffolded 模式）
+                            prompt = f"""Extract 3-4 key viewpoints from this discussion. Each viewpoint should be ONE SHORT sentence (max 15 words).
 
-Person1: I support AI in education
-Person2: I disagree, privacy concerns
-Person3: We need supervision
+Discussion:
+{discussion}
 
-List each viewpoint on a new line:"""
+List each viewpoint on a new line, no numbers or bullets:"""
+                            
+                            response = generate_response(
+                                mode="Scaffolded",
+                                user_message=prompt,
+                                group_id=st.session_state.session_id,
+                                user="System"
+                            )
+                            
+                            if response:
+                                viewpoints = []
+                                for line in response.split('\n'):
+                                    line = line.strip()
+                                    
+                                    # 跳过空行和太短的内容
+                                    if not line or len(line) < 5 or len(line) > 80:
+                                        continue
+                                    
+                                    # 移除开头数字
+                                    cleaned = line
+                                    for prefix in ['1.', '2.', '3.', '4.', '-', '•']:
+                                        if cleaned.startswith(prefix):
+                                            cleaned = cleaned[len(prefix):].strip()
+                                            break
+                                    
+                                    if cleaned and len(cleaned) >= 5:
+                                        viewpoints.append(cleaned[:70])  # 限制长度
+                                
+                                if len(viewpoints) >= 3:
+                                    return viewpoints[:4]
+                        
+                        except Exception as e:
+                            print(f"⚠️ 提取观点错误: {e}")
+                        
+                        return ["观点A", "观点B", "观点C"]
                     
-                    st.write("📤 发送给 API 的提示词：")
-                    st.code(test_prompt, language="text")
+                    # ========== 获取观点 ==========
+                    with st.spinner("🤖 AI 正在分析讨论内容..."):
+                        core_viewpoints = extract_viewpoints_local(messages)
                     
-                    # 调用 API
-                    st.write("⏳ 调用 API...")
-                    test_response = generate_response(
-                        mode="Scaffolded",  # 改成这个
-                        user_message=test_prompt,
-                        group_id="debug",
-                        user="System"
-                    )
+                    # ========== 构建矩阵 ==========
+                    matrix_data = []
                     
-                    st.write("📥 **API 原始返回结果：**")
-                    st.code(test_response, language="text")
-                    st.write(f"返回长度：{len(test_response) if test_response else 0} 字符")
+                    for participant in participants:
+                        row = {}
+                        participant_messages = [
+                            m.get("message", "")
+                            for m in messages
+                            if m.get("user") == participant
+                        ]
+                        participant_text = " ".join(participant_messages).lower()
+                        
+                        for viewpoint in core_viewpoints:
+                            stance = "△"
+                            
+                            agree_keywords = ['赞成', '同意', '支持', 'agree', 'yes', 'beneficial', 'support']
+                            disagree_keywords = ['反对', '不同意', 'disagree', 'no', 'concerns', 'problem']
+                            
+                            has_agree = any(kw in participant_text for kw in agree_keywords)
+                            has_disagree = any(kw in participant_text for kw in disagree_keywords)
+                            
+                            if has_agree and not has_disagree:
+                                stance = "✅"
+                            elif has_disagree and not has_agree:
+                                stance = "❌"
+                            
+                            row[viewpoint] = stance
+                        
+                        matrix_data.append(row)
+                    
+                    # 创建 DataFrame
+                    df = pd.DataFrame(matrix_data, index=participants)
+                    
+                    # 定义样式
+                    def style_cells(val):
+                        if val == "✅":
+                            return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
+                        elif val == "❌":
+                            return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
+                        else:
+                            return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
+                    
+                    # 显示表格
+                    styled_df = df.style.applymap(style_cells)
+                    st.dataframe(styled_df, use_container_width=True)
                     
                     st.divider()
-                    st.write("🛑 **停止这里查看 API 返回**")
-                    st.stop()
+                    
+                    # 图例
+                    st.markdown("**Legend:** ✅ Agree (赞成)  |  ❌ Disagree (反对)  |  △ Neutral (中立)")
                 with tab2:
                     st.subheader("📈 Convergence Analysis")
                     
