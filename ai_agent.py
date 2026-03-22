@@ -72,7 +72,7 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
             "Authorization": f"Bearer {MOONSHOT_KEY}"
         }
         
-               # 确保 system prompt 包含英文强制指令
+        # 确保 system prompt 包含英文强制指令
         full_system_prompt = system_prompt + "\n\n[FINAL INSTRUCTION]: Always respond in English, never in other languages."
         
         payload = {
@@ -158,6 +158,7 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
         _log(f"[🔄 _call_kimi_api END - EXCEPTION]")
         return None
 
+
 def generate_response(mode, user_message, group_id="", user="", conversation_history=None, custom_prompt=None):
     """Generate AI response based on mode"""
     
@@ -238,6 +239,8 @@ def _get_system_prompt(mode):
             f"{FORCE_ENGLISH}\n\n"
             "You are a helpful AI assistant. Answer clearly and directly in English only."
         )
+
+
 def _get_fallback(mode):
     """Fallback responses"""
     if "Scaffolded" in mode:
