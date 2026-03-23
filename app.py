@@ -1054,12 +1054,4 @@ Respond ONLY with format above."""
                 st.info(f"Waiting for more data... (participants: {len(participants)}, messages: {len(messages)})")
 
 
-                        # Debug output
-                st.write("### DEBUG: Extracted Stances")
-                st.write(f"**Viewpoints:** {viewpoints}")
-                with st.expander("Show stance details"):
-                            for participant in participants:
-                                st.write(f"**{participant}:**")
-                                for viewpoint in viewpoints:
-                                    stance = stances_dict.get(participant, {}).get(viewpoint, '△')
-                                    st.write(f"  - {viewpoint}: {stance}")
+            
