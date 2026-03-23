@@ -529,6 +529,254 @@ if not st.session_state.session_started:
                 time.sleep(1)
                 st.rerun()
 
+# ========== Discussion Page ==========
+else:
+    session_info = get_session_info(st.session_state.session_id)
+    
+    if not session_info:
+        st.error("❌ Session information lost, please re-login")
+        if st.button("Return to Login"):
+            st.session_state.session_started = False
+            st.rerun()
+    else:
+        topic = session_info.get("topic", "Discussion Topic")
+        team_name = session_info.get("team_name", "Group")
+        mode = session_info.get("mode", "Control")
+        mode_info = MODE_OPTIONS.get(mode, {})
+        
+        add_participant(st.session_state.session_id, st.session_state.user_name)
+        current_participants = get_session_participants(st.session_state.session_id)
+        current_history = get_history(st.session_state.session_id, limit=500)
+        
+        # Sidebar
+        with st.sidebar:
+            st.title("📱 Dialectical AI")
+            
+            st.markdown("### 👥 Session Information")
+            st.markdown(f"""
+            <div class="team-info-card">
+                <strong>🏢 Group Name:</strong> {team_name}<br>
+                <strong>👤 Your Name:</strong> {st.session_state.user_name}<br>
+                <strong>🤖 AI Mode:</strong> {mode_info.get('name', 'Unknown')}<br>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.divider()
+           
+            st.markdown("### 📊 Session Status")
+            
+            elapsed = datetime.now() - st.session_state.session_start_time
+            remaining = max(0, 2400 - int(elapsed.total_seconds()))
+            minutes = remaining // 60
+            seconds = remaining % 60
+            
+            st.markdown(f"""
+            <div class="session-panel">
+                <div class="session-item">
+                    <span>💬 Messages:</span>
+                    <strong>{len(current_history)}</strong>
+                </div>
+                <div class="session-item">
+                    <span>👥 Group Members:</span>
+                    <strong>{len(current_participants)}</strong>
+                </div>
+                <div class="session-item">
+                    <span>⏱️ Time Remaining:</span>
+                    <span class="timer">{minutes:02d}:{seconds:02d}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.divider()
+            
+            st.markdown("**👥 Active Group Members**")
+            if current_participants:
+                for member in current_participants:
+                    if member == st.session_state.user_name:
+                        st.caption(f"✓ 🟢 {member} (you)")
+                    else:
+                        st.caption(f"● 🔵 {member}")
+            else:
+                st.caption("No active members")
+            
+            st.divider()
+            
+            st.markdown(f"""
+            <div class="topic-card">
+                <strong>📌 Discussion Topic:</strong><br><br>
+                {topic}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.divider()
+            
+            st.markdown(f"""
+            <div class="mode-card">
+                <strong>{mode_info.get('name', 'Unknown Mode')}</strong><br><br>
+                {mode_info.get('description', '')}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.divider()
+            
+            if st.button("📥 Export Discussion Record", use_container_width=True):
+                history = get_history(st.session_state.session_id, limit=1000)
+                if history:
+                    buffer = io.StringIO()
+                    writer = csv.writer(buffer)
+                    writer.writerow(["User", "Role", "Message", "Time"])
+                    for h in history:
+                        writer.writerow([h["user"], h["role"], h["message"], h["timestamp"]])
+                    st.download_button(
+                        "📥 Download CSV",
+                        buffer.getvalue(),
+                        f"discussion_record_{team_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        "text/csv"
+                    )
+        
+        # Main Area
+        st.markdown(f"## 💬 {team_name} Discussion")
+        
+        members_str = ", ".join(current_participants) if current_participants else "No members"
+        st.markdown(f"**👥 Participants:** {members_str}")
+        st.markdown(f"**📌 Topic:** {topic}")
+        
+        st.divider()
+        
+        if mode != "Control":
+            st.markdown("""
+            <div class="ai-hint">
+                💡 <strong>Tip:</strong> Use <code>@AI</code> in your message to mention AI for help.
+            </div>
+            """, unsafe_allow_html=True)
+        
+        progress = min(len(current_history) / 40, 1.0)
+        st.progress(progress, f"📊 {len(current_history)} messages")
+        
+        # Discussion History
+        st.markdown("### 💬 Discussion History")
+        
+        history = get_history(st.session_state.session_id, limit=500)
+        
+        if history:
+            for msg in history:
+                role = msg["role"]
+                user = msg["user"]
+                content = msg["message"]
+                timestamp = msg["timestamp"]
+                
+                try:
+                    time_obj = datetime.fromisoformat(timestamp)
+                    time_str = time_obj.strftime("%H:%M:%S")
+                except:
+                    time_str = ""
+                
+                if role == "assistant" or user == "AI":
+                    col1, col2 = st.columns([0.08, 0.92])
+                    with col2:
+                        st.markdown(f"""
+                        <div class="ai-bubble">
+                            <div class="bubble-header">
+                                <span class="speaker-name">🤖 AI Assistant</span>
+                                <span class="timestamp">{time_str}</span>
+                            </div>
+                            <div class="message-content">{content}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    col1, col2 = st.columns([0.92, 0.08])
+                    with col1:
+                        is_self = user == st.session_state.user_name
+                        has_ai_mention = "@AI" in content or "@ai" in content or "＠AI" in content
+                        
+                        bubble_html = f"""
+                        <div class="student-bubble" style="{'border: 2px solid #ff9800;' if has_ai_mention else ''}">
+                            <div class="bubble-header">
+                                <span class="speaker-name">👤 {user} {'(you)' if is_self else ''} {('🔔' if has_ai_mention else '')}</span>
+                                <span class="timestamp">{time_str}</span>
+                            </div>
+                            <div class="message-content">{content}</div>
+                        </div>
+                        """
+                        
+                        st.markdown(bubble_html, unsafe_allow_html=True)
+        else:
+            st.info("💭 Start discussing!")
+        
+        # Message Input
+        st.markdown("### ✏️ Your Message")
+        
+        col1, col2, col3 = st.columns([0.72, 0.14, 0.14])
+        
+        with col1:
+            user_input = st.text_area(
+                "",
+                placeholder="Share your thoughts... (use @AI to mention AI)",
+                height=80,
+                label_visibility="collapsed"
+            )
+        
+        with col2:
+            st.write("")
+            send_btn = st.button("📤 Send", use_container_width=True)
+        
+        with col3:
+            st.write("")
+            clear_btn = st.button("🗑️ Clear", use_container_width=True)
+        
+        # Handle Send
+        if send_btn:
+            if user_input.strip():
+                save_message(
+                    st.session_state.session_id, 
+                    st.session_state.user_name, 
+                    "user", 
+                    user_input
+                )
+                add_participant(st.session_state.session_id, st.session_state.user_name)
+                
+                ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
+                
+                if ai_triggered and mode != "Control":
+                    conversation_history = get_history(st.session_state.session_id, limit=20)
+                    
+                    with st.spinner("🤖 AI is thinking..."):
+                        try:
+                            print(f"\n[APP] Calling generate_response with mode={mode}", flush=True)
+                            ai_reply = generate_response(
+                                mode,
+                                user_input,
+                                group_id=st.session_state.session_id,
+                                user=st.session_state.user_name,
+                                conversation_history=conversation_history
+                            )
+                            
+                            if ai_reply:
+                                save_message(
+                                    st.session_state.session_id, 
+                                    "AI", 
+                                    "assistant", 
+                                    ai_reply
+                                )
+                                
+                                ai_placeholder = st.empty()
+                                stream_ai_response(ai_reply, ai_placeholder)
+                            else:
+                                st.error("❌ AI returned empty result")
+                        
+                        except Exception as e:
+                            st.error(f"❌ Error calling AI: {str(e)}")
+                            print(f"Error: {e}")
+                
+                time.sleep(0.3)
+                st.rerun()
+        
+        if clear_btn:
+            st.rerun()
+        
+            if clear_btn:
+              st.rerun()
+        
                 def analyze_discussion(messages, participants):
                     """AI analyzes discussion to extract viewpoints and stances"""
                     
