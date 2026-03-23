@@ -982,4 +982,3 @@ Return ONLY the format above. No explanation."""
                                             if '✅' in stance_part:
                                                 stances_dict[matched_participant][matched_viewpoint] = '✅'
                                             elif
-
