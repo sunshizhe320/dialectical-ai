@@ -777,7 +777,7 @@ else:
             if clear_btn:
               st.rerun()
         
-                def analyze_discussion(messages, participants):
+            def analyze_discussion(messages, participants):
                     """AI analyzes discussion to extract viewpoints and stances"""
                     
                     try:
