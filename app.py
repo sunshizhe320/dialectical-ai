@@ -777,79 +777,6 @@ else:
             if clear_btn:
               st.rerun()
         
-        # ========== Analysis & Consensus Matrix ==========
-        st.divider()
-        st.markdown("## 📊 Analysis & Consensus Matrix")
-        
-        if "session_id" in st.session_state and st.session_state.session_id:
-            all_data = load_all_sessions()
-            current_sess = all_data.get(st.session_state.session_id, {})
-            messages = current_sess.get("messages", [])
-            participants = get_session_participants(st.session_state.session_id)
-            
-            if len(messages) >= 3 and len(participants) >= 2:
-                import pandas as pd
-                from ai_agent import generate_response
-                import json
-                from pathlib import Path
-                import time
-                
-                MATRIX_CACHE_DIR = Path("matrix_cache")
-                MATRIX_CACHE_DIR.mkdir(exist_ok=True)
-                
-                def get_matrix_cache_file(session_id):
-                    return MATRIX_CACHE_DIR / f"{session_id}_matrix.json"
-                
-                def get_lock_file(session_id):
-                    return MATRIX_CACHE_DIR / f"{session_id}_lock.txt"
-                
-                def load_cached_matrix(session_id):
-                    cache_file = get_matrix_cache_file(session_id)
-                    if cache_file.exists():
-                        try:
-                            with open(cache_file, 'r', encoding='utf-8') as f:
-                                return json.load(f)
-                        except:
-                            return None
-                    return None
-                
-                def save_matrix_cache(session_id, data):
-                    cache_file = get_matrix_cache_file(session_id)
-                    try:
-                        with open(cache_file, 'w', encoding='utf-8') as f:
-                            json.dump(data, f, ensure_ascii=False, indent=2)
-                    except Exception as e:
-                        print(f"Error saving: {e}")
-                
-                def clear_matrix_cache(session_id):
-                    cache_file = get_matrix_cache_file(session_id)
-                    lock_file = get_lock_file(session_id)
-                    if cache_file.exists():
-                        cache_file.unlink()
-                    if lock_file.exists():
-                        lock_file.unlink()
-                
-                def acquire_lock(session_id, timeout=300):
-                    lock_file = get_lock_file(session_id)
-                    start_time = time.time()
-                    while lock_file.exists():
-                        if time.time() - start_time > timeout:
-                            lock_file.unlink()
-                            break
-                        time.sleep(1)
-                    lock_file.touch()
-                
-                def release_lock(session_id):
-                    lock_file = get_lock_file(session_id)
-                    if lock_file.exists():
-                        lock_file.unlink()
-                
-                col1, col2 = st.columns([0.85, 0.15])
-                with col2:
-                    if st.button("🔄 Reanalyze"):
-                        clear_matrix_cache(st.session_state.session_id)
-                        st.rerun()
-                
                 def analyze_discussion(messages, participants):
                     """AI analyzes discussion to extract viewpoints and stances"""
                     
@@ -870,44 +797,34 @@ else:
                             f"""You are an expert analyst. Carefully read the ENTIRE discussion and analyze each participant's stance.
 
 IMPORTANT RULES:
-- If a participant MENTIONS a concern, they are CONCERNED about it (agree with that viewpoint) = ✅
+- If a participant MENTIONS a concern, they are CONCERNED about it = ✅
 - If a participant EXPLICITLY SAYS "I AGREE" or "I SUPPORT", use ✅
 - If a participant EXPLICITLY SAYS "I DISAGREE" or "I OPPOSE", use ❌
-- If a participant did NOT mention or discuss the viewpoint at all, use △
-- Do NOT confuse "mentioning a problem" with "disagreeing"
+- If a participant did NOT mention or discuss the viewpoint, use △
 
 DISCUSSION:
 {discussion_text}
 
 PARTICIPANTS: {participants_str}
 
-Analyze carefully:
-
-1. What viewpoints were discussed?
-2. For EACH participant, for EACH viewpoint:
-   - Did they SUPPORT this viewpoint? = ✅
-   - Did they OPPOSE this viewpoint? = ❌
-   - Did they NOT mention it clearly? = △
-
-RESPOND IN THIS EXACT FORMAT:
+RESPOND IN THIS EXACT FORMAT ONLY:
 
 VIEWPOINTS:
-1. [Viewpoint 1 - ENGLISH ONLY]
-2. [Viewpoint 2 - ENGLISH ONLY]
-3. [Viewpoint 3 - ENGLISH ONLY]
+1. Data security for minors
+2. AI reduces teacher burden
+3. AI bridges educational gaps
 
 STANCES:
-Participant_Name: Viewpoint_1: [✅ or ❌ or △]
-Participant_Name: Viewpoint_2: [✅ or ❌ or △]
-Participant_Name: Viewpoint_3: [✅ or ❌ or △]
-
-Example interpretation:
-- If "test" says "data security issue exists" → test AGREES = ✅
-- If "test" says "I agree with amber" → test AGREES = ✅
-- If "amber" raises concern about inequality → amber AGREES = ✅
-
-Respond ONLY with format above."""
+Amber: Data security for minors: △
+Amber: AI reduces teacher burden: ✅
+test: Data security for minors: ✅
+test: AI reduces teacher burden: △
+test: AI bridges educational gaps: ✅"""
                         )
+                        
+                        st.write("🔍 Analyzing discussion...")
+                        print(f"[DEBUG] Calling AI with prompt...")
+                        
                         response = generate_response(
                             mode="Scaffolded",
                             user_message=prompt,
@@ -915,8 +832,14 @@ Respond ONLY with format above."""
                             user="System"
                         )
                         
+                        print(f"[DEBUG] AI Response:\n{response}")
+                        
                         if not response:
+                            st.error("❌ AI returned empty response")
                             return None, None
+                        
+                        st.write("📝 Raw response:")
+                        st.code(response, language="text")
                         
                         viewpoints = []
                         stances_dict = {p: {} for p in participants}
@@ -932,7 +855,9 @@ Respond ONLY with format above."""
                             elif 'STANCE' in line.upper():
                                 stance_idx = i
                         
-                        # Extract viewpoints (ENGLISH ONLY)
+                        st.write(f"Found viewpoint section at line {viewpoint_idx}, stance section at line {stance_idx}")
+                        
+                        # Extract viewpoints
                         if viewpoint_idx >= 0:
                             for i in range(viewpoint_idx + 1, len(lines)):
                                 if stance_idx > 0 and i >= stance_idx:
@@ -942,26 +867,27 @@ Respond ONLY with format above."""
                                     parts = line.split('.', 1)
                                     if len(parts) > 1:
                                         vp = parts[1].strip()
-                                        # Only accept if mostly English
-                                        if vp and len(vp) > 3 and all(ord(c) < 128 for c in vp if c.isalpha()):
+                                        if vp and len(vp) > 3:
                                             viewpoints.append(vp[:70])
+                                            st.write(f"✅ Found viewpoint: {vp[:70]}")
                         
-                        # Extract stances with better parsing
-                        if stance_idx >= 0:
+                        st.write(f"Total viewpoints extracted: {len(viewpoints)}")
+                        
+                        # Extract stances
+                        if stance_idx >= 0 and len(viewpoints) > 0:
                             for i in range(stance_idx + 1, len(lines)):
                                 line = lines[i].strip()
                                 if not line or 'Viewpoint' in line or 'VIEWPOINT' in line.upper():
                                     continue
                                 
-                                # Parse "Participant: Viewpoint: Stance" format
                                 if ':' in line:
                                     parts = [p.strip() for p in line.split(':')]
                                     if len(parts) >= 3:
                                         participant_name = parts[0].strip()
                                         viewpoint_name = parts[1].strip()
-                                        stance_part = ':'.join(parts[2:]).strip()  # In case stance has colons
+                                        stance_part = ':'.join(parts[2:]).strip()
                                         
-                                        # Find matching participant (case-insensitive)
+                                        # Find matching participant
                                         matched_participant = None
                                         for p in participants:
                                             if p.lower() in participant_name.lower():
@@ -971,12 +897,12 @@ Respond ONLY with format above."""
                                         # Find matching viewpoint
                                         matched_viewpoint = None
                                         for vp in viewpoints:
-                                            # Compare without special characters
                                             vp_clean = vp.lower().replace('-', ' ').replace('_', ' ')
                                             vp_name_clean = viewpoint_name.lower().replace('-', ' ').replace('_', ' ')
-                                            if vp_clean in vp_name_clean or vp_name_clean in vp_clean:
-                                                matched_viewpoint = vp
-                                                break
+                                            if len(vp_clean) > 3 and len(vp_name_clean) > 3:
+                                                if vp_clean in vp_name_clean or vp_name_clean in vp_clean:
+                                                    matched_viewpoint = vp
+                                                    break
                                         
                                         # Extract stance
                                         if matched_participant and matched_viewpoint:
@@ -986,72 +912,25 @@ Respond ONLY with format above."""
                                                 stances_dict[matched_participant][matched_viewpoint] = '❌'
                                             else:
                                                 stances_dict[matched_participant][matched_viewpoint] = '△'
+                                            st.write(f"✅ {matched_participant}: {matched_viewpoint}: {stance_part}")
                         
-                        # Fill missing values with △
+                        # Fill missing values
                         for participant in participants:
                             for viewpoint in viewpoints:
                                 if viewpoint not in stances_dict[participant]:
                                     stances_dict[participant][viewpoint] = '△'
                         
+                        st.write(f"Final stances: {stances_dict}")
+                        
+                        if not viewpoints or not stances_dict:
+                            st.error("Failed to parse AI response")
+                            return None, None
+                        
                         return viewpoints, stances_dict
                     
                     except Exception as e:
+                        st.error(f"❌ Error: {e}")
                         print(f"Error: {e}")
                         import traceback
                         traceback.print_exc()
                         return None, None
-                
-                cached_data = load_cached_matrix(st.session_state.session_id)
-                
-                if cached_data:
-                    viewpoints = cached_data.get("viewpoints", [])
-                    stances_dict = cached_data.get("stances", {})
-                else:
-                    acquire_lock(st.session_state.session_id)
-                    try:
-                        cached_data = load_cached_matrix(st.session_state.session_id)
-                        if cached_data:
-                            viewpoints = cached_data.get("viewpoints", [])
-                            stances_dict = cached_data.get("stances", {})
-                        else:
-                            with st.spinner("Analyzing discussion..."):
-                                viewpoints, stances_dict = analyze_discussion(messages, participants)
-                            
-                            if viewpoints and stances_dict:
-                                cache_data = {
-                                    "viewpoints": viewpoints,
-                                    "stances": stances_dict,
-                                    "timestamp": datetime.now().isoformat()
-                                }
-                                save_matrix_cache(st.session_state.session_id, cache_data)
-                    finally:
-                        release_lock(st.session_state.session_id)
-                
-                # Display matrix (NO DUPLICATE TITLE)
-                if viewpoints and stances_dict:
-                    matrix_data = {}
-                    for participant in participants:
-                        matrix_data[participant] = {}
-                        for viewpoint in viewpoints:
-                            matrix_data[participant][viewpoint] = stances_dict.get(participant, {}).get(viewpoint, '△')
-                    
-                    df = pd.DataFrame.from_dict(matrix_data, orient='index')
-                    
-                    def style_cells(val):
-                        if val == "✅":
-                            return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
-                        elif val == "❌":
-                            return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
-                        else:
-                            return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
-                    
-                    styled_df = df.style.applymap(style_cells)
-                    st.dataframe(styled_df, use_container_width=True, height=300)
-                else:
-                    st.warning("No matrix available. Try reanalyzing.")
-            
-            else:
-                st.info(f"Waiting for more data... (participants: {len(participants)}, messages: {len(messages)})")
-
-
-            
