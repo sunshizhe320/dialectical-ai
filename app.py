@@ -864,17 +864,19 @@ else:
                     from ai_agent import generate_response
                     import json
                     from pathlib import Path
+                    import time
                     
-                    # ========== 矩阵缓存文件 ==========
+                    # ========== Matrix Cache Files ==========
                     MATRIX_CACHE_DIR = Path("matrix_cache")
                     MATRIX_CACHE_DIR.mkdir(exist_ok=True)
                     
                     def get_matrix_cache_file(session_id):
-                        """获取该session的矩阵缓存文件"""
                         return MATRIX_CACHE_DIR / f"{session_id}_matrix.json"
                     
+                    def get_lock_file(session_id):
+                        return MATRIX_CACHE_DIR / f"{session_id}_lock.txt"
+                    
                     def load_cached_matrix(session_id):
-                        """加载已缓存的矩阵"""
                         cache_file = get_matrix_cache_file(session_id)
                         if cache_file.exists():
                             try:
@@ -885,19 +887,52 @@ else:
                         return None
                     
                     def save_matrix_cache(session_id, data):
-                        """保存矩阵到缓存"""
                         cache_file = get_matrix_cache_file(session_id)
                         try:
                             with open(cache_file, 'w', encoding='utf-8') as f:
                                 json.dump(data, f, ensure_ascii=False, indent=2)
                         except Exception as e:
-                            print(f"❌ 保存矩阵缓存失败: {e}")
+                            print(f"Error saving matrix cache: {e}")
                     
-                    # ========== 第1步：提取观点 ==========
+                    def clear_matrix_cache(session_id):
+                        cache_file = get_matrix_cache_file(session_id)
+                        lock_file = get_lock_file(session_id)
+                        if cache_file.exists():
+                            cache_file.unlink()
+                        if lock_file.exists():
+                            lock_file.unlink()
+                    
+                    def acquire_lock(session_id, timeout=300):
+                        """Wait for lock with timeout"""
+                        lock_file = get_lock_file(session_id)
+                        start_time = time.time()
+                        
+                        while lock_file.exists():
+                            if time.time() - start_time > timeout:
+                                lock_file.unlink()  # Force unlock after timeout
+                                break
+                            time.sleep(1)
+                        
+                        # Create lock
+                        lock_file.touch()
+                    
+                    def release_lock(session_id):
+                        lock_file = get_lock_file(session_id)
+                        if lock_file.exists():
+                            lock_file.unlink()
+                    
+                    # ========== Debug: Reanalyze Button ==========
+                    col1, col2 = st.columns([0.8, 0.2])
+                    with col2:
+                        if st.button("🔄 Reanalyze"):
+                            clear_matrix_cache(st.session_state.session_id)
+                            st.rerun()
+                    
+                    # ========== Step 1: Extract Viewpoints ==========
                     def extract_viewpoints(messages):
-                        """调用 API 提取核心观点"""
+                        """Call API to extract core viewpoints"""
                         if not messages or len(messages) < 2:
-                            return ["观点A", "观点B", "观点C"]
+                            return ["Viewpoint A", "Viewpoint B", "Viewpoint C"]
                         
                         try:
                             discussion = "\n".join([
@@ -908,13 +943,13 @@ else:
                             if len(discussion) > 1500:
                                 discussion = discussion[:1500]
                             
-                            prompt = f"""Analyze this discussion and extract 3-4 core viewpoints.
+                            prompt = """Analyze this discussion and extract 3-4 core viewpoints.
 For EACH viewpoint, provide a short title (max 8 words).
 
 Discussion:
 {discussion}
 
-Return format - only titles, one per line, no numbers."""
+Return format - only titles, one per line, no numbers.""".format(discussion=discussion)
                             
                             response = generate_response(
                                 mode="Scaffolded",
@@ -942,17 +977,17 @@ Return format - only titles, one per line, no numbers."""
                                     return viewpoints[:4]
                         
                         except Exception as e:
-                            print(f"⚠️ 提取观点错误: {e}")
+                            print(f"Error extracting viewpoints: {e}")
                         
-                        return ["观点A", "观点B", "观点C"]
+                        return ["Viewpoint A", "Viewpoint B", "Viewpoint C"]
                     
-                    # ========== 第2步：获取观点 ==========
-                    with st.spinner("🤖 AI 正在提取观点..."):
+                    # ========== Step 2: Get Viewpoints ==========
+                    with st.spinner("Extracting viewpoints..."):
                         core_viewpoints = extract_viewpoints(messages)
                     
-                    # ========== 第3步：为每个人分析态度 ==========
+                    # ========== Step 3: Analyze Stances ==========
                     def analyze_stance_by_ai(participant_name, participant_text, viewpoints_list):
-                        """调用 AI 分析该参与者对每个观点的态度"""
+                        """Call AI to analyze participant's stance on each viewpoint"""
                         
                         if not participant_text.strip():
                             return {vp: "△" for vp in viewpoints_list}
@@ -960,20 +995,26 @@ Return format - only titles, one per line, no numbers."""
                         try:
                             viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(viewpoints_list)])
                             
-                            prompt = f"""Analyze {participant_name}'s stance on each viewpoint.
+                            prompt = """You are an expert analyst. Carefully analyze the participant's stance on each viewpoint.
 
 Viewpoints:
 {viewpoints_str}
 
 {participant_name}'s statements:
-{participant_text[:800]}
+{participant_text}
 
-For EACH viewpoint, determine if {participant_name}:
-- Agrees (✅)
-- Disagrees (❌)  
-- Neutral/Not mentioned (△)
+For EACH viewpoint in order, determine {participant_name}'s stance:
+- Use ✅ if they explicitly AGREE, SUPPORT, or ENDORSE the viewpoint
+- Use ❌ if they explicitly DISAGREE, OPPOSE, or REJECT the viewpoint
+- Use △ if they don't mention it, are NEUTRAL, or UNSURE
 
-Return ONLY the symbols in order, one per line:"""
+IMPORTANT: Be consistent. Read carefully and respond with ONLY the symbols, one per line, in the exact order of viewpoints.
+
+Response format (symbols only, one per line):""".format(
+                                viewpoints_str=viewpoints_str,
+                                participant_name=participant_name,
+                                participant_text=participant_text[:1500]
+                            )
                             
                             response = generate_response(
                                 mode="Scaffolded",
@@ -1001,44 +1042,57 @@ Return ONLY the symbols in order, one per line:"""
                             return stances
                         
                         except Exception as e:
-                            print(f"⚠️ 分析态度错误: {e}")
+                            print(f"Error analyzing stance: {e}")
                             return {vp: "△" for vp in viewpoints_list}
                     
-                    # ========== 第4步：检查缓存和构建矩阵 ==========
+                    # ========== Step 4: Check Cache or Build Matrix ==========
                     cached_data = load_cached_matrix(st.session_state.session_id)
                     
                     if cached_data and cached_data.get("viewpoints") == core_viewpoints:
-                        # 使用缓存的矩阵
+                        # Use cached matrix
                         matrix_dict = cached_data.get("matrix", {})
-                        st.info("✅ 使用已保存的分析结果（所有成员看到相同表格）")
+                        st.info("✅ Using saved analysis results (all members see the same table)")
                     else:
-                        # 生成新矩阵
-                        matrix_dict = {}
+                        # Acquire lock - only one device analyzes
+                        acquire_lock(st.session_state.session_id)
                         
-                        with st.spinner("🤖 AI 正在分析每个人的态度..."):
-                            for participant in participants:
-                                participant_text = " ".join([
-                                    m.get("message", "")
-                                    for m in messages
-                                    if m.get("user") == participant
-                                ])
+                        try:
+                            # Check again if another device just finished
+                            cached_data = load_cached_matrix(st.session_state.session_id)
+                            if cached_data and cached_data.get("viewpoints") == core_viewpoints:
+                                matrix_dict = cached_data.get("matrix", {})
+                                st.info("✅ Using saved analysis results (all members see the same table)")
+                            else:
+                                # Generate new matrix
+                                matrix_dict = {}
                                 
-                                stances = analyze_stance_by_ai(participant, participant_text, core_viewpoints)
-                                matrix_dict[participant] = stances
-                        
-                        # 保存到文件（跨设���同步）
-                        cache_data = {
-                            "viewpoints": core_viewpoints,
-                            "matrix": matrix_dict,
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        save_matrix_cache(st.session_state.session_id, cache_data)
-                        st.success("✅ 分析完成，已保存结果")
+                                with st.spinner("Analyzing participant stances (please wait)..."):
+                                    for participant in participants:
+                                        participant_text = " ".join([
+                                            m.get("message", "")
+                                            for m in messages
+                                            if m.get("user") == participant
+                                        ])
+                                        
+                                        st.write(f"Analyzing {participant}...")
+                                        stances = analyze_stance_by_ai(participant, participant_text, core_viewpoints)
+                                        matrix_dict[participant] = stances
+                                
+                                # Save to file (cross-device sync)
+                                cache_data = {
+                                    "viewpoints": core_viewpoints,
+                                    "matrix": matrix_dict,
+                                    "timestamp": datetime.now().isoformat()
+                                }
+                                save_matrix_cache(st.session_state.session_id, cache_data)
+                                st.success("✅ Analysis complete. Results saved and synced to all devices.")
+                        finally:
+                            release_lock(st.session_state.session_id)
                     
-                    # ========== 显示表格 ==========
+                    # ========== Display Table ==========
                     df = pd.DataFrame.from_dict(matrix_dict, orient='index')
                     
-                    # 定义样式
+                    # Define styles
                     def style_cells(val):
                         if val == "✅":
                             return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
@@ -1047,6 +1101,6 @@ Return ONLY the symbols in order, one per line:"""
                         else:
                             return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
                     
-                    # 显示表格
+                    # Display table
                     styled_df = df.style.applymap(style_cells)
                     st.dataframe(styled_df, use_container_width=True, height=200)
