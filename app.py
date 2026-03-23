@@ -771,166 +771,313 @@ else:
                 time.sleep(0.3)
                 st.rerun()
         
-        if clear_btn:
-            st.rerun()
+                if clear_btn:
+                  st.rerun()
         
-            if clear_btn:
-              st.rerun()
+        # ========== Analysis & Consensus Matrix ==========
+        st.divider()
+        st.markdown("## 📊 Analysis & Consensus Matrix")
         
-            def analyze_discussion(messages, participants):
-                    """AI analyzes discussion to extract viewpoints and stances"""
-                    
+        all_data = load_all_sessions()
+        current_sess = all_data.get(st.session_state.session_id, {})
+        messages = current_sess.get("messages", [])
+        participants = get_session_participants(st.session_state.session_id)
+        
+        st.info(f"📊 Messages: {len(messages)} | 👥 Participants: {len(participants)}")
+        
+        if len(messages) >= 3 and len(participants) >= 2:
+            import pandas as pd
+            from ai_agent import generate_response
+            import json
+            from pathlib import Path
+            import time
+            
+            MATRIX_CACHE_DIR = Path("matrix_cache")
+            MATRIX_CACHE_DIR.mkdir(exist_ok=True)
+            
+            def get_matrix_cache_file(session_id):
+                return MATRIX_CACHE_DIR / f"{session_id}_matrix.json"
+            
+            def get_lock_file(session_id):
+                return MATRIX_CACHE_DIR / f"{session_id}_lock.txt"
+            
+            def load_cached_matrix(session_id):
+                cache_file = get_matrix_cache_file(session_id)
+                if cache_file.exists():
                     try:
-                        user_messages = [m for m in messages if m.get('user') != 'AI']
-                        
-                        discussion_text = "\n\n".join([
-                            f"{m.get('user', 'Unknown')}: {m.get('message', '')}"
-                            for m in user_messages[-20:]
-                        ])
-                        
-                        if len(discussion_text) > 2000:
-                            discussion_text = discussion_text[:2000]
-                        
-                        participants_str = ", ".join(participants)
-                        
-                        prompt = (
-                            f"""You are an expert analyst. Carefully read the ENTIRE discussion and analyze each participant's stance.
-
-IMPORTANT RULES:
-- If a participant MENTIONS a concern, they are CONCERNED about it = ✅
-- If a participant EXPLICITLY SAYS "I AGREE" or "I SUPPORT", use ✅
-- If a participant EXPLICITLY SAYS "I DISAGREE" or "I OPPOSE", use ❌
-- If a participant did NOT mention or discuss the viewpoint, use △
+                        with open(cache_file, 'r', encoding='utf-8') as f:
+                            return json.load(f)
+                    except:
+                        return None
+                return None
+            
+            def save_matrix_cache(session_id, data):
+                cache_file = get_matrix_cache_file(session_id)
+                try:
+                    with open(cache_file, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    print(f"Error saving: {e}")
+            
+            def clear_matrix_cache(session_id):
+                cache_file = get_matrix_cache_file(session_id)
+                lock_file = get_lock_file(session_id)
+                if cache_file.exists():
+                    cache_file.unlink()
+                if lock_file.exists():
+                    lock_file.unlink()
+            
+            def acquire_lock(session_id, timeout=300):
+                lock_file = get_lock_file(session_id)
+                start_time = time.time()
+                while lock_file.exists():
+                    if time.time() - start_time > timeout:
+                        lock_file.unlink()
+                        break
+                    time.sleep(1)
+                lock_file.touch()
+            
+            def release_lock(session_id):
+                lock_file = get_lock_file(session_id)
+                if lock_file.exists():
+                    lock_file.unlink()
+            
+            col1, col2 = st.columns([0.85, 0.15])
+            with col2:
+                if st.button("🔄 Reanalyze"):
+                    clear_matrix_cache(st.session_state.session_id)
+                    st.rerun()
+            
+            def extract_viewpoints_step1(messages, participants):
+                """STEP 1: Extract viewpoints from discussion"""
+                try:
+                    user_messages = [m for m in messages if m.get('user') != 'AI']
+                    
+                    discussion_text = "\n\n".join([
+                        f"{m.get('user')}: {m.get('message', '')}"
+                        for m in user_messages[-30:]
+                    ])
+                    
+                    if len(discussion_text) > 2500:
+                        discussion_text = discussion_text[:2500]
+                    
+                    participants_str = ", ".join(participants)
+                    
+                    prompt = f"""Read this discussion carefully. Identify the 3-4 MAIN VIEWPOINTS or CLAIMS that participants are discussing.
 
 DISCUSSION:
 {discussion_text}
 
 PARTICIPANTS: {participants_str}
 
-RESPOND IN THIS EXACT FORMAT ONLY:
+TASK: Extract the core viewpoints being discussed. These should be distinct positions or concerns raised.
+
+RESPOND IN THIS FORMAT ONLY:
 
 VIEWPOINTS:
-1. Data security for minors
-2. AI reduces teacher burden
-3. AI bridges educational gaps
+1. [Viewpoint 1 - concise, max 10 words]
+2. [Viewpoint 2 - concise, max 10 words]
+3. [Viewpoint 3 - concise, max 10 words]
+
+Example format:
+VIEWPOINTS:
+1. AI poses data security risks for minors
+2. AI can reduce teacher administrative work
+3. AI helps address educational inequality"""
+                    
+                    response = generate_response(
+                        mode="Scaffolded",
+                        user_message=prompt,
+                        group_id=st.session_state.session_id,
+                        user="System"
+                    )
+                    
+                    if not response:
+                        return None
+                    
+                    viewpoints = []
+                    lines = response.split('\n')
+                    in_viewpoints = False
+                    
+                    for line in lines:
+                        if 'VIEWPOINT' in line.upper():
+                            in_viewpoints = True
+                            continue
+                        if in_viewpoints and line.strip():
+                            if line.strip()[0].isdigit() and '.' in line:
+                                vp = line.split('.', 1)[1].strip()
+                                if vp and len(vp) > 3:
+                                    viewpoints.append(vp[:100])
+                            elif not line.strip()[0].isdigit():
+                                break
+                    
+                    return viewpoints if len(viewpoints) >= 3 else None
+                
+                except Exception as e:
+                    print(f"Error in step 1: {e}")
+                    return None
+            
+            def analyze_stances_step2(messages, participants, viewpoints):
+                """STEP 2: Analyze each participant's stance on each viewpoint"""
+                try:
+                    user_messages = [m for m in messages if m.get('user') != 'AI']
+                    
+                    discussion_text = "\n\n".join([
+                        f"{m.get('user')}: {m.get('message', '')}"
+                        for m in user_messages[-30:]
+                    ])
+                    
+                    if len(discussion_text) > 2500:
+                        discussion_text = discussion_text[:2500]
+                    
+                    viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(viewpoints)])
+                    participants_str = ", ".join(participants)
+                    
+                    prompt = f"""Analyze each participant's stance on these viewpoints. Read CAREFULLY.
+
+VIEWPOINTS:
+{viewpoints_str}
+
+DISCUSSION:
+{discussion_text}
+
+PARTICIPANTS: {participants_str}
+
+RULES:
+- Use ✅ only if participant EXPLICITLY or STRONGLY agrees/supports the viewpoint
+- Use ❌ only if participant EXPLICITLY or STRONGLY disagrees/opposes the viewpoint
+- Use △ if participant did NOT discuss it, or is unclear/neutral
+
+RESPOND IN THIS FORMAT ONLY:
 
 STANCES:
-Amber: Data security for minors: △
-Amber: AI reduces teacher burden: ✅
-test: Data security for minors: ✅
-test: AI reduces teacher burden: △
-test: AI bridges educational gaps: ✅"""
-                        )
-                        
-                        st.write("🔍 Analyzing discussion...")
-                        print(f"[DEBUG] Calling AI with prompt...")
-                        
-                        response = generate_response(
-                            mode="Scaffolded",
-                            user_message=prompt,
-                            group_id=st.session_state.session_id,
-                            user="System"
-                        )
-                        
-                        print(f"[DEBUG] AI Response:\n{response}")
-                        
-                        if not response:
-                            st.error("❌ AI returned empty response")
-                            return None, None
-                        
-                        st.write("📝 Raw response:")
-                        st.code(response, language="text")
-                        
-                        viewpoints = []
-                        stances_dict = {p: {} for p in participants}
-                        
-                        lines = response.split('\n')
-                        
-                        viewpoint_idx = -1
-                        stance_idx = -1
-                        
-                        for i, line in enumerate(lines):
-                            if 'VIEWPOINT' in line.upper():
-                                viewpoint_idx = i
-                            elif 'STANCE' in line.upper():
-                                stance_idx = i
-                        
-                        st.write(f"Found viewpoint section at line {viewpoint_idx}, stance section at line {stance_idx}")
-                        
-                        # Extract viewpoints
-                        if viewpoint_idx >= 0:
-                            for i in range(viewpoint_idx + 1, len(lines)):
-                                if stance_idx > 0 and i >= stance_idx:
-                                    break
-                                line = lines[i].strip()
-                                if line and line[0].isdigit() and '.' in line:
-                                    parts = line.split('.', 1)
-                                    if len(parts) > 1:
-                                        vp = parts[1].strip()
-                                        if vp and len(vp) > 3:
-                                            viewpoints.append(vp[:70])
-                                            st.write(f"✅ Found viewpoint: {vp[:70]}")
-                        
-                        st.write(f"Total viewpoints extracted: {len(viewpoints)}")
-                        
-                        # Extract stances
-                        if stance_idx >= 0 and len(viewpoints) > 0:
-                            for i in range(stance_idx + 1, len(lines)):
-                                line = lines[i].strip()
-                                if not line or 'Viewpoint' in line or 'VIEWPOINT' in line.upper():
-                                    continue
-                                
-                                if ':' in line:
-                                    parts = [p.strip() for p in line.split(':')]
-                                    if len(parts) >= 3:
-                                        participant_name = parts[0].strip()
-                                        viewpoint_name = parts[1].strip()
-                                        stance_part = ':'.join(parts[2:]).strip()
-                                        
-                                        # Find matching participant
-                                        matched_participant = None
-                                        for p in participants:
-                                            if p.lower() in participant_name.lower():
-                                                matched_participant = p
-                                                break
-                                        
-                                        # Find matching viewpoint
-                                        matched_viewpoint = None
-                                        for vp in viewpoints:
-                                            vp_clean = vp.lower().replace('-', ' ').replace('_', ' ')
-                                            vp_name_clean = viewpoint_name.lower().replace('-', ' ').replace('_', ' ')
-                                            if len(vp_clean) > 3 and len(vp_name_clean) > 3:
-                                                if vp_clean in vp_name_clean or vp_name_clean in vp_clean:
-                                                    matched_viewpoint = vp
-                                                    break
-                                        
-                                        # Extract stance
-                                        if matched_participant and matched_viewpoint:
-                                            if '✅' in stance_part:
-                                                stances_dict[matched_participant][matched_viewpoint] = '✅'
-                                            elif '❌' in stance_part:
-                                                stances_dict[matched_participant][matched_viewpoint] = '❌'
-                                            else:
-                                                stances_dict[matched_participant][matched_viewpoint] = '△'
-                                            st.write(f"✅ {matched_participant}: {matched_viewpoint}: {stance_part}")
-                        
-                        # Fill missing values
-                        for participant in participants:
-                            for viewpoint in viewpoints:
-                                if viewpoint not in stances_dict[participant]:
-                                    stances_dict[participant][viewpoint] = '△'
-                        
-                        st.write(f"Final stances: {stances_dict}")
-                        
-                        if not viewpoints or not stances_dict:
-                            st.error("Failed to parse AI response")
-                            return None, None
-                        
-                        return viewpoints, stances_dict
+Participant_Name: Viewpoint_1: [✅ or ❌ or △]
+Participant_Name: Viewpoint_2: [✅ or ❌ or △]
+Participant_Name: Viewpoint_3: [✅ or ❌ or △]
+(repeat for all participants and viewpoints)
+
+Example:
+STANCES:
+Amber: AI poses data security risks for minors: △
+Amber: AI can reduce teacher administrative work: ✅
+test: AI poses data security risks for minors: ✅
+test: AI can reduce teacher administrative work: △"""
                     
-                    except Exception as e:
-                        st.error(f"❌ Error: {e}")
-                        print(f"Error: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        return None, None
+                    response = generate_response(
+                        mode="Scaffolded",
+                        user_message=prompt,
+                        group_id=st.session_state.session_id,
+                        user="System"
+                    )
+                    
+                    if not response:
+                        return None
+                    
+                    stances_dict = {p: {} for p in participants}
+                    lines = response.split('\n')
+                    in_stances = False
+                    
+                    for line in lines:
+                        if 'STANCE' in line.upper():
+                            in_stances = True
+                            continue
+                        
+                        if in_stances and ':' in line and ('✅' in line or '❌' in line or '△' in line):
+                            parts = [p.strip() for p in line.split(':')]
+                            if len(parts) >= 3:
+                                participant = parts[0].strip()
+                                viewpoint_text = parts[1].strip()
+                                stance = parts[2].strip()
+                                
+                                # Find matching participant
+                                matched_p = None
+                                for p in participants:
+                                    if p.lower() == participant.lower():
+                                        matched_p = p
+                                        break
+                                
+                                # Find matching viewpoint
+                                matched_vp = None
+                                for vp in viewpoints:
+                                    if viewpoint_text.lower() in vp.lower() or vp.lower() in viewpoint_text.lower():
+                                        matched_vp = vp
+                                        break
+                                
+                                if matched_p and matched_vp:
+                                    if '✅' in stance:
+                                        stances_dict[matched_p][matched_vp] = '✅'
+                                    elif '❌' in stance:
+                                        stances_dict[matched_p][matched_vp] = '❌'
+                                    else:
+                                        stances_dict[matched_p][matched_vp] = '△'
+                    
+                    # Fill missing
+                    for p in participants:
+                        for vp in viewpoints:
+                            if vp not in stances_dict[p]:
+                                stances_dict[p][vp] = '△'
+                    
+                    return stances_dict
+                
+                except Exception as e:
+                    print(f"Error in step 2: {e}")
+                    return None
+            
+            # Check cache
+            cached_data = load_cached_matrix(st.session_state.session_id)
+            
+            if cached_data:
+                viewpoints = cached_data.get("viewpoints", [])
+                stances_dict = cached_data.get("stances", {})
+                st.success("✅ Using saved analysis")
+            else:
+                acquire_lock(st.session_state.session_id)
+                try:
+                    cached_data = load_cached_matrix(st.session_state.session_id)
+                    if cached_data:
+                        viewpoints = cached_data.get("viewpoints", [])
+                        stances_dict = cached_data.get("stances", {})
+                    else:
+                        with st.spinner("Step 1: Extracting viewpoints..."):
+                            viewpoints = extract_viewpoints_step1(messages, participants)
+                        
+                        if viewpoints:
+                            st.success(f"✅ Found {len(viewpoints)} viewpoints")
+                            with st.spinner("Step 2: Analyzing stances..."):
+                                stances_dict = analyze_stances_step2(messages, participants, viewpoints)
+                            
+                            if stances_dict:
+                                cache_data = {
+                                    "viewpoints": viewpoints,
+                                    "stances": stances_dict,
+                                    "timestamp": datetime.now().isoformat()
+                                }
+                                save_matrix_cache(st.session_state.session_id, cache_data)
+                                st.success("✅ Analysis complete")
+                        else:
+                            st.error("Failed to extract viewpoints")
+                finally:
+                    release_lock(st.session_state.session_id)
+            
+            # Display table
+            if viewpoints and stances_dict:
+                matrix_data = {}
+                for p in participants:
+                    matrix_data[p] = {}
+                    for vp in viewpoints:
+                        matrix_data[p][vp] = stances_dict.get(p, {}).get(vp, '△')
+                
+                df = pd.DataFrame.from_dict(matrix_data, orient='index')
+                
+                def style_cells(val):
+                    if val == "✅":
+                        return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
+                    elif val == "❌":
+                        return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
+                    else:
+                        return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
+                
+                styled_df = df.style.applymap(style_cells)
+                st.dataframe(styled_df, use_container_width=True, height=300)
+        else:
+            st.warning(f"⏳ Waiting for more discussion... (need 3+ messages and 2+ participants)")
