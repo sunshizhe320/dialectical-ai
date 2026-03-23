@@ -866,7 +866,8 @@ else:
                         
                         participants_str = ", ".join(participants)
                         
-                                                prompt = f"""You are an expert analyst. Carefully read the ENTIRE discussion and analyze each participant's stance.
+                        prompt = (
+                            f"""You are an expert analyst. Carefully read the ENTIRE discussion and analyze each participant's stance.
 
 IMPORTANT RULES:
 - If a participant MENTIONS a concern, they are CONCERNED about it (agree with that viewpoint) = ✅
@@ -899,15 +900,14 @@ STANCES:
 Participant_Name: Viewpoint_1: [✅ or ❌ or △]
 Participant_Name: Viewpoint_2: [✅ or ❌ or △]
 Participant_Name: Viewpoint_3: [✅ or ❌ or △]
-(repeat for all participants)
 
 Example interpretation:
-- If "test" says "data security issue exists" → test AGREES with "Data security concerns" = ✅
-- If "test" says "I agree with amber" about bridging gaps → test AGREES with that viewpoint = ✅
-- If "amber" raises a concern about inequality → amber AGREES that inequality is a concern = ✅
+- If "test" says "data security issue exists" → test AGREES = ✅
+- If "test" says "I agree with amber" → test AGREES = ✅
+- If "amber" raises concern about inequality → amber AGREES = ✅
 
-Respond ONLY with the format above."""
-                        
+Respond ONLY with format above."""
+                        )
                         response = generate_response(
                             mode="Scaffolded",
                             user_message=prompt,
@@ -1052,3 +1052,14 @@ Respond ONLY with the format above."""
             
             else:
                 st.info(f"Waiting for more data... (participants: {len(participants)}, messages: {len(messages)})")
+
+
+                                        # Debug output
+                        st.write("### DEBUG: Extracted Stances")
+                        st.write(f"**Viewpoints:** {viewpoints}")
+                        with st.expander("Show stance details"):
+                            for participant in participants:
+                                st.write(f"**{participant}:**")
+                                for viewpoint in viewpoints:
+                                    stance = stances_dict.get(participant, {}).get(viewpoint, '△')
+                                    st.write(f"  - {viewpoint}: {stance}")
