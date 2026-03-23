@@ -981,4 +981,73 @@ Return ONLY the format above. No explanation."""
                                         if matched_participant and matched_viewpoint:
                                             if '✅' in stance_part:
                                                 stances_dict[matched_participant][matched_viewpoint] = '✅'
-                                            elif
+                                            elif '❌' in stance_part:
+                                                stances_dict[matched_participant][matched_viewpoint] = '❌'
+                                            else:
+                                                stances_dict[matched_participant][matched_viewpoint] = '△'
+                        
+                        # Fill missing values with △
+                        for participant in participants:
+                            for viewpoint in viewpoints:
+                                if viewpoint not in stances_dict[participant]:
+                                    stances_dict[participant][viewpoint] = '△'
+                        
+                        return viewpoints, stances_dict
+                    
+                    except Exception as e:
+                        print(f"Error: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        return None, None
+                
+                cached_data = load_cached_matrix(st.session_state.session_id)
+                
+                if cached_data:
+                    viewpoints = cached_data.get("viewpoints", [])
+                    stances_dict = cached_data.get("stances", {})
+                else:
+                    acquire_lock(st.session_state.session_id)
+                    try:
+                        cached_data = load_cached_matrix(st.session_state.session_id)
+                        if cached_data:
+                            viewpoints = cached_data.get("viewpoints", [])
+                            stances_dict = cached_data.get("stances", {})
+                        else:
+                            with st.spinner("Analyzing discussion..."):
+                                viewpoints, stances_dict = analyze_discussion(messages, participants)
+                            
+                            if viewpoints and stances_dict:
+                                cache_data = {
+                                    "viewpoints": viewpoints,
+                                    "stances": stances_dict,
+                                    "timestamp": datetime.now().isoformat()
+                                }
+                                save_matrix_cache(st.session_state.session_id, cache_data)
+                    finally:
+                        release_lock(st.session_state.session_id)
+                
+                # Display matrix (NO DUPLICATE TITLE)
+                if viewpoints and stances_dict:
+                    matrix_data = {}
+                    for participant in participants:
+                        matrix_data[participant] = {}
+                        for viewpoint in viewpoints:
+                            matrix_data[participant][viewpoint] = stances_dict.get(participant, {}).get(viewpoint, '△')
+                    
+                    df = pd.DataFrame.from_dict(matrix_data, orient='index')
+                    
+                    def style_cells(val):
+                        if val == "✅":
+                            return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
+                        elif val == "❌":
+                            return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
+                        else:
+                            return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
+                    
+                    styled_df = df.style.applymap(style_cells)
+                    st.dataframe(styled_df, use_container_width=True, height=300)
+                else:
+                    st.warning("No matrix available. Try reanalyzing.")
+            
+            else:
+                st.info(f"Waiting for more data... (participants: {len(participants)}, messages: {len(messages)})")
