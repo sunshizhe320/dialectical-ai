@@ -866,46 +866,47 @@ else:
                         
                         participants_str = ", ".join(participants)
                         
-                        prompt = f"""You are an expert analyst. Analyze this discussion ONLY IN ENGLISH.
+                                                prompt = f"""You are an expert analyst. Carefully read the ENTIRE discussion and analyze each participant's stance.
 
-Extract 3-4 main viewpoints discussed. Then for each participant and viewpoint:
-- Use ✅ ONLY if they EXPLICITLY AGREE, SUPPORT, or ENDORSE the viewpoint
-- Use ❌ ONLY if they EXPLICITLY DISAGREE, OPPOSE, or REJECT the viewpoint
-- Use △ if they did NOT mention it, or did NOT express a clear stance
-
-CRITICAL: If a participant did not discuss a viewpoint, use △ (not ❌).
+IMPORTANT RULES:
+- If a participant MENTIONS a concern, they are CONCERNED about it (agree with that viewpoint) = ✅
+- If a participant EXPLICITLY SAYS "I AGREE" or "I SUPPORT", use ✅
+- If a participant EXPLICITLY SAYS "I DISAGREE" or "I OPPOSE", use ❌
+- If a participant did NOT mention or discuss the viewpoint at all, use △
+- Do NOT confuse "mentioning a problem" with "disagreeing"
 
 DISCUSSION:
 {discussion_text}
 
 PARTICIPANTS: {participants_str}
 
-RESPOND IN THIS EXACT FORMAT ONLY:
+Analyze carefully:
+
+1. What viewpoints were discussed?
+2. For EACH participant, for EACH viewpoint:
+   - Did they SUPPORT this viewpoint? = ✅
+   - Did they OPPOSE this viewpoint? = ❌
+   - Did they NOT mention it clearly? = △
+
+RESPOND IN THIS EXACT FORMAT:
 
 VIEWPOINTS:
-1. [Viewpoint 1 - max 8 words, ENGLISH ONLY]
-2. [Viewpoint 2 - max 8 words, ENGLISH ONLY]
-3. [Viewpoint 3 - max 8 words, ENGLISH ONLY]
+1. [Viewpoint 1 - ENGLISH ONLY]
+2. [Viewpoint 2 - ENGLISH ONLY]
+3. [Viewpoint 3 - ENGLISH ONLY]
 
 STANCES:
 Participant_Name: Viewpoint_1: [✅ or ❌ or △]
 Participant_Name: Viewpoint_2: [✅ or ❌ or △]
 Participant_Name: Viewpoint_3: [✅ or ❌ or △]
-(repeat for each participant)
+(repeat for all participants)
 
-Example:
-VIEWPOINTS:
-1. Data security for minors
-2. AI reduces teacher burden
-3. AI addresses resource gaps
+Example interpretation:
+- If "test" says "data security issue exists" → test AGREES with "Data security concerns" = ✅
+- If "test" says "I agree with amber" about bridging gaps → test AGREES with that viewpoint = ✅
+- If "amber" raises a concern about inequality → amber AGREES that inequality is a concern = ✅
 
-STANCES:
-Amber: Data security for minors: △
-Amber: AI reduces teacher burden: ✅
-test: Data security for minors: ✅
-test: AI reduces teacher burden: △
-
-Return ONLY the format above. No explanation."""
+Respond ONLY with the format above."""
                         
                         response = generate_response(
                             mode="Scaffolded",
