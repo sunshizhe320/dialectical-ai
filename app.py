@@ -906,7 +906,8 @@ else:
                         else:
                             return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
                     
-                    styled_df = df.style.applymap(style_cells)
+                    # 改这一行
+                    styled_df = df.style.map(style_cells)  # 用 map 代替 applymap
                     st.dataframe(styled_df, use_container_width=True, height=300)
                     
                     # 显示指标分析

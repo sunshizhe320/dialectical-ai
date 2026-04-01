@@ -27,161 +27,136 @@ class ConsensusMatrix:
     def __init__(self):
         self.cache = {}
     
-    def extract_viewpoints_step1(
-        self, 
-        messages: List[Dict], 
-        participants: List[str],
-        llm_mode: str = "AI-Scaffolded"
-    ) -> Optional[List[str]]:
-        """
-        STEP 1: 提取讨论中的核心观点
-        支持增量提取新消息中的观点
-        """
-        try:
-            user_messages = [m for m in messages if m.get('user') != 'AI']
-            
-            if not user_messages:
-                return None
-            
-            discussion_text = "\n\n".join([
-                f"{m.get('user')}: {m.get('message', '')}"
-                for m in user_messages[-30:]
-            ])
-            
-            if len(discussion_text) > 2500:
-                discussion_text = discussion_text[:2500]
-            
-            participants_str = ", ".join(participants)
-            
-            prompt = f"""Read this discussion carefully. Identify the 3-4 MAIN VIEWPOINTS or CLAIMS that participants are discussing.
-
-DISCUSSION:
-{discussion_text}
-
-PARTICIPANTS: {participants_str}
-
-TASK: Extract the core viewpoints being discussed. These should be distinct positions or concerns raised.
-
-RESPOND IN THIS FORMAT ONLY:
-
-VIEWPOINTS:
-1. [Viewpoint 1 - concise, max 10 words]
-2. [Viewpoint 2 - concise, max 10 words]
-3. [Viewpoint 3 - concise, max 10 words]
-
-Example format:
-VIEWPOINTS:
-1. AI poses data security risks for minors
-2. AI can reduce teacher administrative work
-3. AI helps address educational inequality"""
-            
-            response = generate_response(
-                llm_mode,
-                prompt,
-                group_id="system",
-                user="System"
-            )
-            
-            if not response:
-                return None
-            
-            viewpoints = self._parse_viewpoints(response)
-            return viewpoints if len(viewpoints) >= 3 else None
+def extract_viewpoints_step1(
+    self, 
+    messages: List[Dict], 
+    participants: List[str],
+    llm_mode: str = "AI-Scaffolded"
+) -> Optional[List[str]]:
+    """
+    STEP 1: 提取讨论中的核心观点
+    支持增量提取新消息中的观点
+    """
+    try:
+        from ai_agent import generate_response
         
-        except Exception as e:
-            print(f"❌ 观点提取失败: {e}")
+        user_messages = [m for m in messages if m.get('user') != 'AI']
+        
+        if not user_messages:
             return None
-    
-    def _parse_viewpoints(self, response: str) -> List[str]:
-        """解析LLM返回的观点"""
-        viewpoints = []
-        lines = response.split('\n')
-        in_viewpoints = False
         
-        for line in lines:
-            if 'VIEWPOINT' in line.upper():
-                in_viewpoints = True
-                continue
-            if in_viewpoints and line.strip():
-                if line.strip()[0].isdigit() and '.' in line:
-                    vp = line.split('.', 1)[1].strip()
-                    if vp and len(vp) > 3:
-                        viewpoints.append(vp[:100])
-                elif not line.strip()[0].isdigit():
-                    break
+        discussion_text = "\n\n".join([
+            f"{m.get('user')}: {m.get('message', '')}"
+            for m in user_messages[-30:]
+        ])
         
-        return viewpoints
-    
-    def analyze_stances_step2(
-        self,
-        messages: List[Dict],
-        participants: List[str],
-        viewpoints: List[str],
-        llm_mode: str = "AI-Scaffolded"
-    ) -> Optional[Dict]:
-        """
-        STEP 2: 分析每个参与者对每个观点的立场
-        """
-        try:
-            user_messages = [m for m in messages if m.get('user') != 'AI']
-            
-            discussion_text = "\n\n".join([
-                f"{m.get('user')}: {m.get('message', '')}"
-                for m in user_messages[-30:]
-            ])
-            
-            if len(discussion_text) > 2500:
-                discussion_text = discussion_text[:2500]
-            
-            viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(viewpoints)])
-            participants_str = ", ".join(participants)
-            
-            prompt = f"""Analyze each participant's stance on these viewpoints. Read CAREFULLY.
+        if len(discussion_text) > 2500:
+            discussion_text = discussion_text[:2500]
+        
+        participants_str = ", ".join(participants)
+        
+        # 改进的提示词 - 更精确的指导
+        prompt = f"""You are an expert at analyzing discussions. Extract the MAIN VIEWPOINTS or CLAIMS being discussed.
 
-VIEWPOINTS:
-{viewpoints_str}
+IMPORTANT RULES:
+1. Only extract viewpoints that are EXPLICITLY stated in the discussion
+2. Do NOT create viewpoints that don't exist
+3. Extract 1-3 viewpoints maximum based on what's actually discussed
+4. Each viewpoint should be concise (under 12 words)
+5. If there's only 1 message, extract the main points from that message
 
 DISCUSSION:
 {discussion_text}
 
-PARTICIPANTS: {participants_str}
+TASK: Extract the core viewpoints being discussed. Be precise and only extract what is actually there.
 
-RULES:
-- Use ✅ only if participant EXPLICITLY or STRONGLY agrees/supports the viewpoint
-- Use ❌ only if participant EXPLICITLY or STRONGLY disagrees/opposes the viewpoint
-- Use △ if participant did NOT discuss it, or is unclear/neutral
-
-RESPOND IN THIS FORMAT ONLY:
-
-STANCES:
-Participant_Name: Viewpoint_1: [✅ or ❌ or △]
-Participant_Name: Viewpoint_2: [✅ or ❌ or △]
-Participant_Name: Viewpoint_3: [✅ or ❌ or △]
-(repeat for all participants and viewpoints)
+RESPOND IN THIS JSON FORMAT ONLY (no other text):
+{{
+  "viewpoints": [
+    "Viewpoint 1 - concise claim",
+    "Viewpoint 2 - concise claim"
+  ]
+}}
 
 Example:
-STANCES:
-Amber: AI poses data security risks for minors: △
-Amber: AI can reduce teacher administrative work: ✅
-test: AI poses data security risks for minors: ✅
-test: AI can reduce teacher administrative work: △"""
-            
-            response = generate_response(
-                llm_mode,
-                prompt,
-                group_id="system",
-                user="System"
-            )
-            
-            if not response:
-                return None
-            
-            stances_dict = self._parse_stances(response, participants, viewpoints)
-            return stances_dict
+{{
+  "viewpoints": [
+    "AI poses data security risks for minors",
+    "AI reduces teacher administrative work"
+  ]
+}}"""
         
-        except Exception as e:
-            print(f"❌ 态度分析失败: {e}")
+        response = generate_response(
+            llm_mode,
+            prompt,
+            group_id="system",
+            user="System"
+        )
+        
+        if not response:
             return None
+        
+        # 改进的解析逻辑 - 使用 JSON 解析
+        viewpoints = self._parse_viewpoints_json(response)
+        
+        # 需要至少 1 个观点
+        return viewpoints if len(viewpoints) >= 1 else None
+    
+    except Exception as e:
+        print(f"❌ 观点提取失败: {e}")
+        return None
+
+def _parse_viewpoints_json(self, response: str) -> List[str]:
+    """使用 JSON 解析观点 - 更准确"""
+    try:
+        import json
+        
+        # 尝试提取 JSON
+        start_idx = response.find('{')
+        end_idx = response.rfind('}') + 1
+        
+        if start_idx != -1 and end_idx > start_idx:
+            json_str = response[start_idx:end_idx]
+            data = json.loads(json_str)
+            viewpoints = data.get('viewpoints', [])
+            
+            # 清理和验证
+            viewpoints = [
+                vp.strip() 
+                for vp in viewpoints 
+                if isinstance(vp, str) and vp.strip() and len(vp.strip()) > 3
+            ]
+            
+            return viewpoints[:5]  # 最多 5 个观点
+    except:
+        pass
+    
+    # 备用方案：文本解析
+    return self._parse_viewpoints(response)
+
+def _parse_viewpoints(self, response: str) -> List[str]:
+    """备用文本解析方法"""
+    viewpoints = []
+    lines = response.split('\n')
+    in_viewpoints = False
+    
+    for line in lines:
+        if 'VIEWPOINT' in line.upper() or 'viewpoints' in line.lower():
+            in_viewpoints = True
+            continue
+        
+        if in_viewpoints and line.strip():
+            # 匹配数字开头的行
+            if line.strip() and line.strip()[0].isdigit() and '.' in line:
+                vp = line.split('.', 1)[1].strip()
+                if vp and len(vp) > 3 and len(vp) < 150:
+                    viewpoints.append(vp)
+            elif '-' in line and not line.strip()[0].isdigit():
+                vp = line.split('-', 1)[1].strip()
+                if vp and len(vp) > 3 and len(vp) < 150:
+                    viewpoints.append(vp)
+    
+    return viewpoints[:5]  # 最多 5 个观点
     
     def _parse_stances(
         self,
@@ -216,6 +191,7 @@ test: AI can reduce teacher administrative work: △"""
                     # 匹配观点
                     matched_vp = None
                     for vp in viewpoints:
+
                         if viewpoint_text.lower() in vp.lower() or vp.lower() in viewpoint_text.lower():
                             matched_vp = vp
                             break
