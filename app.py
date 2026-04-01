@@ -774,7 +774,7 @@ else:
                 if clear_btn:
                   st.rerun()
         
-                # ========== Analysis & Consensus Matrix (实时更新版) ==========
+                        # ========== Analysis & Consensus Matrix (实时更新版 - 单用户即可) ==========
         st.divider()
         st.markdown("## 📊 Analysis & Consensus Matrix")
         
@@ -790,18 +790,19 @@ else:
         with status_col2:
             st.metric("👥 Participants", len(participants))
         with status_col3:
-            st.metric("💬 Discussions", len([m for m in messages if m.get('user') != 'AI']))
+            user_msg_count = len([m for m in messages if m.get('user') != 'AI'])
+            st.metric("💬 Discussions", user_msg_count)
         with status_col4:
             if st.button("🔄 Refresh", key="refresh_matrix"):
                 from matrix_updater import updater
                 updater.clear_cache(st.session_state.session_id)
                 st.rerun()
         
-        # 检查是否满足分析条件
+        # 检查是否有用户消息（只需1条就可以了）
         user_message_count = len([m for m in messages if m.get('user') != 'AI'])
         
-        if user_message_count < 3 or len(participants) < 2:
-            st.warning(f"⏳ Waiting for more discussion... (need 3+ messages from 2+ participants)")
+        if user_message_count < 1:
+            st.warning(f"⏳ Waiting for discussion... (need at least 1 message)")
             st.info(f"Current: {user_message_count} messages, {len(participants)} participants")
         else:
             # ===== 核心实时更新逻辑 =====
@@ -870,7 +871,10 @@ else:
                                 else:
                                     st.error("❌ Failed to analyze stances")
                             else:
-                                st.error("❌ Failed to extract viewpoints")
+                                st.warning("⏳ Still analyzing viewpoints... please wait")
+                    except Exception as e:
+                        st.error(f"❌ Error during analysis: {str(e)}")
+                        print(f"Analysis error: {e}")
                     finally:
                         updater.release_lock(session_id)
             
@@ -882,55 +886,56 @@ else:
                 stances_dict = cached_matrix.get("stances", {})
                 metrics = cached_matrix.get("metrics", {})
                 
-                # 显示矩阵表格
-                st.markdown("### 📋 Consensus Matrix")
-                
-                matrix_data = {}
-                for p in participants:
-                    matrix_data[p] = {}
-                    for vp in viewpoints:
-                        matrix_data[p][vp] = stances_dict.get(p, {}).get(vp, '△')
-                
-                df = pd.DataFrame.from_dict(matrix_data, orient='index')
-                
-                def style_cells(val):
-                    if val == "✅":
-                        return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
-                    elif val == "❌":
-                        return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
-                    else:
-                        return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
-                
-                styled_df = df.style.applymap(style_cells)
-                st.dataframe(styled_df, use_container_width=True, height=300)
-                
-                # 显示指标分析
-                st.markdown("### 📈 Consensus Analysis")
-                
-                metric_cols = st.columns(len(viewpoints) if viewpoints else 1)
-                for idx, (vp, metric_data) in enumerate(metrics.items()):
-                    with metric_cols[idx]:
-                        consensus_pct = int(metric_data['consensus_level'] * 100)
-                        st.metric(
-                            vp[:25] + "..." if len(vp) > 25 else vp,
-                            f"{consensus_pct}%",
-                            delta=f"✅{metric_data['agreement']} ❌{metric_data['disagreement']} △{metric_data['neutral']}"
-                        )
-                
-                # 显示更新时间
-                last_update = cached_matrix.get("timestamp")
-                if last_update:
-                    st.caption(f"Last updated: {last_update[:19]}")
+                if viewpoints and stances_dict:
+                    # 显示矩阵表格
+                    st.markdown("### 📋 Consensus Matrix")
+                    
+                    matrix_data = {}
+                    for p in participants:
+                        matrix_data[p] = {}
+                        for vp in viewpoints:
+                            matrix_data[p][vp] = stances_dict.get(p, {}).get(vp, '△')
+                    
+                    df = pd.DataFrame.from_dict(matrix_data, orient='index')
+                    
+                    def style_cells(val):
+                        if val == "✅":
+                            return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
+                        elif val == "❌":
+                            return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
+                        else:
+                            return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
+                    
+                    styled_df = df.style.applymap(style_cells)
+                    st.dataframe(styled_df, use_container_width=True, height=300)
+                    
+                    # 显示指标分析
+                    st.markdown("### 📈 Consensus Analysis")
+                    
+                    metric_cols = st.columns(len(viewpoints) if viewpoints else 1)
+                    for idx, (vp, metric_data) in enumerate(metrics.items()):
+                        with metric_cols[idx]:
+                            consensus_pct = int(metric_data['consensus_level'] * 100)
+                            st.metric(
+                                vp[:20] + "..." if len(vp) > 20 else vp,
+                                f"{consensus_pct}%",
+                                delta=f"✅{metric_data['agreement']} ❌{metric_data['disagreement']} △{metric_data['neutral']}"
+                            )
+                    
+                    # 显示更新时间
+                    last_update = cached_matrix.get("timestamp")
+                    if last_update:
+                        st.caption(f"⏱️ Last updated: {last_update[:19]}")
             else:
-                st.info("Waiting for matrix calculation...")
+                st.info("🔄 Waiting for matrix calculation...")
         
         # 自动刷新逻辑 - 定期检查更新
         if "matrix_last_check" not in st.session_state:
             st.session_state.matrix_last_check = datetime.now()
         
-        # 每5秒检查一次是否有新消息
+        # 每3秒检查一次是否有新消息
         time_since_check = (datetime.now() - st.session_state.matrix_last_check).total_seconds()
-        if time_since_check > 5:
+        if time_since_check > 3:
             st.session_state.matrix_last_check = datetime.now()
             # 自动刷新页面以检查新消息
             st.rerun()
