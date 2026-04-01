@@ -774,7 +774,7 @@ else:
                 if clear_btn:
                   st.rerun()
         
-        # ========== Analysis & Consensus Matrix ==========
+                # ========== Analysis & Consensus Matrix (实时更新版) ==========
         st.divider()
         st.markdown("## 📊 Analysis & Consensus Matrix")
         
@@ -783,284 +783,108 @@ else:
         messages = current_sess.get("messages", [])
         participants = get_session_participants(st.session_state.session_id)
         
-        st.info(f"📊 Messages: {len(messages)} | 👥 Participants: {len(participants)}")
+        # 显示实时状态
+        status_col1, status_col2, status_col3, status_col4 = st.columns(4)
+        with status_col1:
+            st.metric("📨 Messages", len(messages))
+        with status_col2:
+            st.metric("👥 Participants", len(participants))
+        with status_col3:
+            st.metric("💬 Discussions", len([m for m in messages if m.get('user') != 'AI']))
+        with status_col4:
+            if st.button("🔄 Refresh", key="refresh_matrix"):
+                from matrix_updater import updater
+                updater.clear_cache(st.session_state.session_id)
+                st.rerun()
         
-        if len(messages) >= 3 and len(participants) >= 2:
+        # 检查是否满足分析条件
+        user_message_count = len([m for m in messages if m.get('user') != 'AI'])
+        
+        if user_message_count < 3 or len(participants) < 2:
+            st.warning(f"⏳ Waiting for more discussion... (need 3+ messages from 2+ participants)")
+            st.info(f"Current: {user_message_count} messages, {len(participants)} participants")
+        else:
+            # ===== 核心实时更新逻辑 =====
+            from matrix_updater import updater
+            from consensus_matrix import ConsensusMatrix
             import pandas as pd
-            from ai_agent import generate_response
-            import json
-            from pathlib import Path
-            import time
             
-            MATRIX_CACHE_DIR = Path("matrix_cache")
-            MATRIX_CACHE_DIR.mkdir(exist_ok=True)
+            session_id = st.session_state.session_id
+            mode = session_info.get("mode", "Control")
             
-            def get_matrix_cache_file(session_id):
-                return MATRIX_CACHE_DIR / f"{session_id}_matrix.json"
+            # 初始化矩阵计算器
+            matrix_calc = ConsensusMatrix()
             
-            def get_lock_file(session_id):
-                return MATRIX_CACHE_DIR / f"{session_id}_lock.txt"
+            # 检查是否需要更新
+            needs_update = updater.needs_update(session_id, user_message_count)
             
-            def load_cached_matrix(session_id):
-                cache_file = get_matrix_cache_file(session_id)
-                if cache_file.exists():
+            if needs_update:
+                # 获取锁并更新
+                st.info("🔄 Analyzing discussion in real-time...")
+                
+                if updater.acquire_lock(session_id):
                     try:
-                        with open(cache_file, 'r', encoding='utf-8') as f:
-                            return json.load(f)
-                    except:
-                        return None
-                return None
-            
-            def save_matrix_cache(session_id, data):
-                cache_file = get_matrix_cache_file(session_id)
-                try:
-                    with open(cache_file, 'w', encoding='utf-8') as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                except Exception as e:
-                    print(f"Error saving: {e}")
-            
-            def clear_matrix_cache(session_id):
-                cache_file = get_matrix_cache_file(session_id)
-                lock_file = get_lock_file(session_id)
-                if cache_file.exists():
-                    cache_file.unlink()
-                if lock_file.exists():
-                    lock_file.unlink()
-            
-            def acquire_lock(session_id, timeout=300):
-                lock_file = get_lock_file(session_id)
-                start_time = time.time()
-                while lock_file.exists():
-                    if time.time() - start_time > timeout:
-                        lock_file.unlink()
-                        break
-                    time.sleep(1)
-                lock_file.touch()
-            
-            def release_lock(session_id):
-                lock_file = get_lock_file(session_id)
-                if lock_file.exists():
-                    lock_file.unlink()
-            
-            col1, col2 = st.columns([0.85, 0.15])
-            with col2:
-                if st.button("🔄 Reanalyze"):
-                    clear_matrix_cache(st.session_state.session_id)
-                    st.rerun()
-            
-            def extract_viewpoints_step1(messages, participants):
-                """STEP 1: Extract viewpoints from discussion"""
-                try:
-                    user_messages = [m for m in messages if m.get('user') != 'AI']
-                    
-                    discussion_text = "\n\n".join([
-                        f"{m.get('user')}: {m.get('message', '')}"
-                        for m in user_messages[-30:]
-                    ])
-                    
-                    if len(discussion_text) > 2500:
-                        discussion_text = discussion_text[:2500]
-                    
-                    participants_str = ", ".join(participants)
-                    
-                    prompt = f"""Read this discussion carefully. Identify the 3-4 MAIN VIEWPOINTS or CLAIMS that participants are discussing.
-
-DISCUSSION:
-{discussion_text}
-
-PARTICIPANTS: {participants_str}
-
-TASK: Extract the core viewpoints being discussed. These should be distinct positions or concerns raised.
-
-RESPOND IN THIS FORMAT ONLY:
-
-VIEWPOINTS:
-1. [Viewpoint 1 - concise, max 10 words]
-2. [Viewpoint 2 - concise, max 10 words]
-3. [Viewpoint 3 - concise, max 10 words]
-
-Example format:
-VIEWPOINTS:
-1. AI poses data security risks for minors
-2. AI can reduce teacher administrative work
-3. AI helps address educational inequality"""
-                    
-                    response = generate_response(
-                        mode="Scaffolded",
-                        user_message=prompt,
-                        group_id=st.session_state.session_id,
-                        user="System"
-                    )
-                    
-                    if not response:
-                        return None
-                    
-                    viewpoints = []
-                    lines = response.split('\n')
-                    in_viewpoints = False
-                    
-                    for line in lines:
-                        if 'VIEWPOINT' in line.upper():
-                            in_viewpoints = True
-                            continue
-                        if in_viewpoints and line.strip():
-                            if line.strip()[0].isdigit() and '.' in line:
-                                vp = line.split('.', 1)[1].strip()
-                                if vp and len(vp) > 3:
-                                    viewpoints.append(vp[:100])
-                            elif not line.strip()[0].isdigit():
-                                break
-                    
-                    return viewpoints if len(viewpoints) >= 3 else None
-                
-                except Exception as e:
-                    print(f"Error in step 1: {e}")
-                    return None
-            
-            def analyze_stances_step2(messages, participants, viewpoints):
-                """STEP 2: Analyze each participant's stance on each viewpoint"""
-                try:
-                    user_messages = [m for m in messages if m.get('user') != 'AI']
-                    
-                    discussion_text = "\n\n".join([
-                        f"{m.get('user')}: {m.get('message', '')}"
-                        for m in user_messages[-30:]
-                    ])
-                    
-                    if len(discussion_text) > 2500:
-                        discussion_text = discussion_text[:2500]
-                    
-                    viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(viewpoints)])
-                    participants_str = ", ".join(participants)
-                    
-                    prompt = f"""Analyze each participant's stance on these viewpoints. Read CAREFULLY.
-
-VIEWPOINTS:
-{viewpoints_str}
-
-DISCUSSION:
-{discussion_text}
-
-PARTICIPANTS: {participants_str}
-
-RULES:
-- Use ✅ only if participant EXPLICITLY or STRONGLY agrees/supports the viewpoint
-- Use ❌ only if participant EXPLICITLY or STRONGLY disagrees/opposes the viewpoint
-- Use △ if participant did NOT discuss it, or is unclear/neutral
-
-RESPOND IN THIS FORMAT ONLY:
-
-STANCES:
-Participant_Name: Viewpoint_1: [✅ or ❌ or △]
-Participant_Name: Viewpoint_2: [✅ or ❌ or △]
-Participant_Name: Viewpoint_3: [✅ or ❌ or △]
-(repeat for all participants and viewpoints)
-
-Example:
-STANCES:
-Amber: AI poses data security risks for minors: △
-Amber: AI can reduce teacher administrative work: ✅
-test: AI poses data security risks for minors: ✅
-test: AI can reduce teacher administrative work: △"""
-                    
-                    response = generate_response(
-                        mode="Scaffolded",
-                        user_message=prompt,
-                        group_id=st.session_state.session_id,
-                        user="System"
-                    )
-                    
-                    if not response:
-                        return None
-                    
-                    stances_dict = {p: {} for p in participants}
-                    lines = response.split('\n')
-                    in_stances = False
-                    
-                    for line in lines:
-                        if 'STANCE' in line.upper():
-                            in_stances = True
-                            continue
-                        
-                        if in_stances and ':' in line and ('✅' in line or '❌' in line or '△' in line):
-                            parts = [p.strip() for p in line.split(':')]
-                            if len(parts) >= 3:
-                                participant = parts[0].strip()
-                                viewpoint_text = parts[1].strip()
-                                stance = parts[2].strip()
-                                
-                                # Find matching participant
-                                matched_p = None
-                                for p in participants:
-                                    if p.lower() == participant.lower():
-                                        matched_p = p
-                                        break
-                                
-                                # Find matching viewpoint
-                                matched_vp = None
-                                for vp in viewpoints:
-                                    if viewpoint_text.lower() in vp.lower() or vp.lower() in viewpoint_text.lower():
-                                        matched_vp = vp
-                                        break
-                                
-                                if matched_p and matched_vp:
-                                    if '✅' in stance:
-                                        stances_dict[matched_p][matched_vp] = '✅'
-                                    elif '❌' in stance:
-                                        stances_dict[matched_p][matched_vp] = '❌'
-                                    else:
-                                        stances_dict[matched_p][matched_vp] = '△'
-                    
-                    # Fill missing
-                    for p in participants:
-                        for vp in viewpoints:
-                            if vp not in stances_dict[p]:
-                                stances_dict[p][vp] = '△'
-                    
-                    return stances_dict
-                
-                except Exception as e:
-                    print(f"Error in step 2: {e}")
-                    return None
-            
-            # Check cache
-            cached_data = load_cached_matrix(st.session_state.session_id)
-            
-            if cached_data:
-                viewpoints = cached_data.get("viewpoints", [])
-                stances_dict = cached_data.get("stances", {})
-                st.success("✅ Using saved analysis")
-            else:
-                acquire_lock(st.session_state.session_id)
-                try:
-                    cached_data = load_cached_matrix(st.session_state.session_id)
-                    if cached_data:
-                        viewpoints = cached_data.get("viewpoints", [])
-                        stances_dict = cached_data.get("stances", {})
-                    else:
-                        with st.spinner("Step 1: Extracting viewpoints..."):
-                            viewpoints = extract_viewpoints_step1(messages, participants)
-                        
-                        if viewpoints:
-                            st.success(f"✅ Found {len(viewpoints)} viewpoints")
-                            with st.spinner("Step 2: Analyzing stances..."):
-                                stances_dict = analyze_stances_step2(messages, participants, viewpoints)
+                        # 再次检查是否已更新（防止并发冲突）
+                        if updater.needs_update(session_id, user_message_count):
+                            with st.spinner("📊 Extracting viewpoints..."):
+                                viewpoints = matrix_calc.extract_viewpoints_step1(
+                                    messages,
+                                    participants,
+                                    llm_mode=mode
+                                )
                             
-                            if stances_dict:
-                                cache_data = {
-                                    "viewpoints": viewpoints,
-                                    "stances": stances_dict,
-                                    "timestamp": datetime.now().isoformat()
-                                }
-                                save_matrix_cache(st.session_state.session_id, cache_data)
-                                st.success("✅ Analysis complete")
-                        else:
-                            st.error("Failed to extract viewpoints")
-                finally:
-                    release_lock(st.session_state.session_id)
+                            if viewpoints:
+                                st.success(f"✅ Found {len(viewpoints)} viewpoints")
+                                
+                                with st.spinner("📈 Analyzing stances..."):
+                                    stances_dict = matrix_calc.analyze_stances_step2(
+                                        messages,
+                                        participants,
+                                        viewpoints,
+                                        llm_mode=mode
+                                    )
+                                
+                                if stances_dict:
+                                    # 计算指标
+                                    metrics = matrix_calc.calculate_consensus_metrics(
+                                        viewpoints,
+                                        stances_dict
+                                    )
+                                    
+                                    # 缓存结果
+                                    cache_data = {
+                                        "viewpoints": viewpoints,
+                                        "stances": stances_dict,
+                                        "metrics": metrics,
+                                        "timestamp": datetime.now().isoformat(),
+                                        "content_hash": updater.compute_content_hash(messages)
+                                    }
+                                    updater.save_cache(session_id, cache_data)
+                                    updater.update_state(
+                                        session_id,
+                                        user_message_count,
+                                        len(viewpoints)
+                                    )
+                                    
+                                    st.success("✅ Matrix updated successfully!")
+                                else:
+                                    st.error("❌ Failed to analyze stances")
+                            else:
+                                st.error("❌ Failed to extract viewpoints")
+                    finally:
+                        updater.release_lock(session_id)
             
-            # Display table
-            if viewpoints and stances_dict:
+            # ===== 加载并显示缓存的矩阵 =====
+            cached_matrix = updater.load_cache(session_id)
+            
+            if cached_matrix:
+                viewpoints = cached_matrix.get("viewpoints", [])
+                stances_dict = cached_matrix.get("stances", {})
+                metrics = cached_matrix.get("metrics", {})
+                
+                # 显示矩阵表格
+                st.markdown("### 📋 Consensus Matrix")
+                
                 matrix_data = {}
                 for p in participants:
                     matrix_data[p] = {}
@@ -1079,5 +903,34 @@ test: AI can reduce teacher administrative work: △"""
                 
                 styled_df = df.style.applymap(style_cells)
                 st.dataframe(styled_df, use_container_width=True, height=300)
-        else:
-            st.warning(f"⏳ Waiting for more discussion... (need 3+ messages and 2+ participants)")
+                
+                # 显示指标分析
+                st.markdown("### 📈 Consensus Analysis")
+                
+                metric_cols = st.columns(len(viewpoints) if viewpoints else 1)
+                for idx, (vp, metric_data) in enumerate(metrics.items()):
+                    with metric_cols[idx]:
+                        consensus_pct = int(metric_data['consensus_level'] * 100)
+                        st.metric(
+                            vp[:25] + "..." if len(vp) > 25 else vp,
+                            f"{consensus_pct}%",
+                            delta=f"✅{metric_data['agreement']} ❌{metric_data['disagreement']} △{metric_data['neutral']}"
+                        )
+                
+                # 显示更新时间
+                last_update = cached_matrix.get("timestamp")
+                if last_update:
+                    st.caption(f"Last updated: {last_update[:19]}")
+            else:
+                st.info("Waiting for matrix calculation...")
+        
+        # 自动刷新逻辑 - 定期检查更新
+        if "matrix_last_check" not in st.session_state:
+            st.session_state.matrix_last_check = datetime.now()
+        
+        # 每5秒检查一次是否有新消息
+        time_since_check = (datetime.now() - st.session_state.matrix_last_check).total_seconds()
+        if time_since_check > 5:
+            st.session_state.matrix_last_check = datetime.now()
+            # 自动刷新页面以检查新消息
+            st.rerun()

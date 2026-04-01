@@ -328,6 +328,72 @@ Provide analysis in markdown format."""
         _log(f"  {error_msg}")
         _log(f"[📊 generate_argument_map END - FAILED]")
         return error_msg
+def extract_viewpoints(messages):
+    """
+    从讨论消息中提取核心观点
+    Args:
+        messages: 讨论消息列表
+    Returns:
+        list: 3-4个核心观点
+    """
+    
+    if not messages or len(messages) < 2:
+        return ["观点A", "观点B", "观点C"]
+    
+    try:
+        # 准备讨论文本
+        discussion = "\n".join([
+            f"{m.get('user', 'Unknown')}: {m.get('message', '')}"
+            for m in messages[-10:]  # 最近10条消息
+        ])
+        
+        if len(discussion) > 1500:
+            discussion = discussion[:1500]
+        
+        # 调用 API
+        prompt = f"""从以下讨论中提取3-4个核心观点。每个观点用一句话表达（不超过15字）。
 
+讨论内容：
+{discussion}
+
+请直接列出观点，每行一个，不要序号或其他符号："""
+        
+        response = _call_kimi_api(
+            system_prompt="你是一个讨论分析专家。请分析讨论并提取核心观点。",
+            user_message=prompt,
+            max_tokens=200
+        )
+        
+        if response:
+            # 解析响应
+            viewpoints = []
+            for line in response.split('\n'):
+                line = line.strip()
+                
+                # 跳过空行和无关内容
+                if not line or len(line) < 3 or len(line) > 40:
+                    continue
+                
+                # 移除开头的数字、符号
+                cleaned = line
+                for prefix in ['1.', '2.', '3.', '4.', '-', '•', '·', '①', '②', '③', '④']:
+                    if cleaned.startswith(prefix):
+                        cleaned = cleaned[len(prefix):].strip()
+                        break
+                
+                if cleaned and len(cleaned) >= 3 and len(cleaned) <= 35:
+                    viewpoints.append(cleaned)
+            
+            if len(viewpoints) >= 3:
+                return viewpoints[:4]
+        
+    except Exception as e:
+        print(f"⚠️ extract_viewpoints error: {e}", flush=True)
+    
+    # 备用观点
+    return ["观点A", "观点B", "观点C"]
+
+
+# End of file
 
 # End of file
