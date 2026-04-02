@@ -774,169 +774,169 @@ else:
                 if clear_btn:
                   st.rerun()
         
-                        # ========== Analysis & Consensus Matrix (实时更新版 - 单用户即可) ==========
-        st.divider()
-        st.markdown("## 📊 Analysis & Consensus Matrix")
+# ========== Analysis & Consensus Matrix (多人实时版) ==========
+st.divider()
+st.markdown("## 📊 Analysis & Consensus Matrix")
+
+all_data = load_all_sessions()
+current_sess = all_data.get(st.session_state.session_id, {})
+messages = current_sess.get("messages", [])
+participants = get_session_participants(st.session_state.session_id)
+
+# 显示实时��态
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("📨 Messages", len(messages))
+with col2:
+    st.metric("👥 Participants", len(participants))
+with col3:
+    user_msg_count = len([m for m in messages if m.get('user') != 'AI'])
+    st.metric("💬 Discussions", user_msg_count)
+with col4:
+    if st.button("🔄 Refresh", key="refresh_matrix"):
+        from matrix_updater import updater
+        updater.clear_cache(st.session_state.session_id)
+        st.rerun()
+
+user_message_count = len([m for m in messages if m.get('user') != 'AI'])
+
+if user_message_count < 1:
+    st.warning(f"⏳ Waiting for discussion... (need at least 1 message)")
+else:
+    # ===== 多人实时更新核心逻辑 =====
+    from matrix_updater import updater
+    from consensus_matrix import ConsensusMatrix
+    import pandas as pd
+    
+    session_id = st.session_state.session_id
+    mode = session_info.get("mode", "Control")
+    
+    matrix_calc = ConsensusMatrix()
+    
+    # 检查是否需要更新
+    should_reanalyze = updater.should_update_viewpoints(session_id, messages)
+    
+    if should_reanalyze:
+        st.info("🔄 Analyzing discussion with multiple participants...")
         
-        all_data = load_all_sessions()
-        current_sess = all_data.get(st.session_state.session_id, {})
-        messages = current_sess.get("messages", [])
-        participants = get_session_participants(st.session_state.session_id)
-        
-        # 显示实时状态
-        status_col1, status_col2, status_col3, status_col4 = st.columns(4)
-        with status_col1:
-            st.metric("📨 Messages", len(messages))
-        with status_col2:
-            st.metric("👥 Participants", len(participants))
-        with status_col3:
-            user_msg_count = len([m for m in messages if m.get('user') != 'AI'])
-            st.metric("💬 Discussions", user_msg_count)
-        with status_col4:
-            if st.button("🔄 Refresh", key="refresh_matrix"):
-                from matrix_updater import updater
-                updater.clear_cache(st.session_state.session_id)
-                st.rerun()
-        
-        # 检查是否有用户消息（只需1条就可以了）
-        user_message_count = len([m for m in messages if m.get('user') != 'AI'])
-        
-        if user_message_count < 1:
-            st.warning(f"⏳ Waiting for discussion... (need at least 1 message)")
-            st.info(f"Current: {user_message_count} messages, {len(participants)} participants")
-        else:
-            # ===== 核心实时更新逻辑 =====
-            from matrix_updater import updater
-            from consensus_matrix import ConsensusMatrix
-            import pandas as pd
-            
-            session_id = st.session_state.session_id
-            mode = session_info.get("mode", "Control")
-            
-            # 初始化矩阵计算器
-            matrix_calc = ConsensusMatrix()
-            
-            # 检查是否需要更新
-            needs_update = updater.needs_update(session_id, user_message_count)
-            
-            if needs_update:
-                # 获取锁并更新
-                st.info("🔄 Analyzing discussion in real-time...")
-                
-                if updater.acquire_lock(session_id):
-                    try:
-                        # 再次检查是否已更新（防止并发冲突）
-                        if updater.needs_update(session_id, user_message_count):
-                            with st.spinner("📊 Extracting viewpoints..."):
-                                viewpoints = matrix_calc.extract_viewpoints_step1(
-                                    messages,
-                                    participants,
-                                    llm_mode=mode
-                                )
-                            
-                            if viewpoints:
-                                st.success(f"✅ Found {len(viewpoints)} viewpoints")
-                                
-                                with st.spinner("📈 Analyzing stances..."):
-                                    stances_dict = matrix_calc.analyze_stances_step2(
-                                        messages,
-                                        participants,
-                                        viewpoints,
-                                        llm_mode=mode
-                                    )
-                                
-                                if stances_dict:
-                                    # 计算指标
-                                    metrics = matrix_calc.calculate_consensus_metrics(
-                                        viewpoints,
-                                        stances_dict
-                                    )
-                                    
-                                    # 缓存结果
-                                    cache_data = {
-                                        "viewpoints": viewpoints,
-                                        "stances": stances_dict,
-                                        "metrics": metrics,
-                                        "timestamp": datetime.now().isoformat(),
-                                        "content_hash": updater.compute_content_hash(messages)
-                                    }
-                                    updater.save_cache(session_id, cache_data)
-                                    updater.update_state(
-                                        session_id,
-                                        user_message_count,
-                                        len(viewpoints)
-                                    )
-                                    
-                                    st.success("✅ Matrix updated successfully!")
-                                else:
-                                    st.error("❌ Failed to analyze stances")
-                            else:
-                                st.warning("⏳ Still analyzing viewpoints... please wait")
-                    except Exception as e:
-                        st.error(f"❌ Error during analysis: {str(e)}")
-                        print(f"Analysis error: {e}")
-                    finally:
-                        updater.release_lock(session_id)
-            
-            # ===== 加载并显示缓存的矩阵 =====
-            cached_matrix = updater.load_cache(session_id)
-            
-            if cached_matrix:
-                viewpoints = cached_matrix.get("viewpoints", [])
-                stances_dict = cached_matrix.get("stances", {})
-                metrics = cached_matrix.get("metrics", {})
-                
-                if viewpoints and stances_dict:
-                    # 显示矩阵表格
-                    st.markdown("### 📋 Consensus Matrix")
+        if updater.acquire_lock(session_id, timeout=60):
+            try:
+                # 再次检查
+                if updater.should_update_viewpoints(session_id, messages):
+                    with st.spinner("📊 Extracting all viewpoints..."):
+                        viewpoints = matrix_calc.extract_viewpoints_step1(
+                            messages,
+                            participants,
+                            llm_mode=mode
+                        )
                     
-                    matrix_data = {}
-                    for p in participants:
-                        matrix_data[p] = {}
-                        for vp in viewpoints:
-                            matrix_data[p][vp] = stances_dict.get(p, {}).get(vp, '△')
-                    
-                    df = pd.DataFrame.from_dict(matrix_data, orient='index')
-                    
-                    def style_cells(val):
-                        if val == "✅":
-                            return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
-                        elif val == "❌":
-                            return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 18px; text-align: center;'
-                        else:
-                            return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
-                    
-                    # 改这一行
-                    styled_df = df.style.map(style_cells)  # 用 map 代替 applymap
-                    st.dataframe(styled_df, use_container_width=True, height=300)
-                    
-                    # 显示指标分析
-                    st.markdown("### 📈 Consensus Analysis")
-                    
-                    metric_cols = st.columns(len(viewpoints) if viewpoints else 1)
-                    for idx, (vp, metric_data) in enumerate(metrics.items()):
-                        with metric_cols[idx]:
-                            consensus_pct = int(metric_data['consensus_level'] * 100)
-                            st.metric(
-                                vp[:20] + "..." if len(vp) > 20 else vp,
-                                f"{consensus_pct}%",
-                                delta=f"✅{metric_data['agreement']} ❌{metric_data['disagreement']} △{metric_data['neutral']}"
+                    if viewpoints:
+                        st.success(f"✅ Found {len(viewpoints)} viewpoints from {len(participants)} participants")
+                        
+                        with st.spinner("📈 Analyzing each participant's stance..."):
+                            stances_dict = matrix_calc.analyze_stances_step2(
+                                messages,
+                                participants,
+                                viewpoints,
+                                llm_mode=mode
                             )
-                    
-                    # 显示更新时间
-                    last_update = cached_matrix.get("timestamp")
-                    if last_update:
-                        st.caption(f"⏱️ Last updated: {last_update[:19]}")
-            else:
-                st.info("🔄 Waiting for matrix calculation...")
+                        
+                        if stances_dict:
+                            # 计算指标
+                            metrics = matrix_calc.calculate_consensus_metrics(
+                                viewpoints,
+                                stances_dict
+                            )
+                            
+                            # 缓存结果
+                            cache_data = {
+                                "viewpoints": viewpoints,
+                                "stances": stances_dict,
+                                "metrics": metrics,
+                                "timestamp": datetime.now().isoformat(),
+                                "content_hash": updater.compute_content_hash(messages),
+                                "participant_count": len(participants)
+                            }
+                            updater.save_cache(session_id, cache_data)
+                            updater.update_state(
+                                session_id,
+                                user_message_count,
+                                len(viewpoints)
+                            )
+                            
+                            st.success("✅ Matrix updated successfully!")
+                        else:
+                            st.error("❌ Failed to analyze stances")
+                    else:
+                        st.info("⏳ Still extracting viewpoints...")
+            except Exception as e:
+                st.error(f"❌ Error during analysis: {str(e)}")
+                print(f"Analysis error: {e}")
+            finally:
+                updater.release_lock(session_id)
+    
+    # ===== 显示矩阵 =====
+    cached_matrix = updater.load_cache(session_id)
+    
+    if cached_matrix:
+        viewpoints = cached_matrix.get("viewpoints", [])
+        stances_dict = cached_matrix.get("stances", {})
+        metrics = cached_matrix.get("metrics", {})
         
-        # 自动刷新逻辑 - 定期检查更新
-        if "matrix_last_check" not in st.session_state:
-            st.session_state.matrix_last_check = datetime.now()
-        
-        # 每3秒检查一次是否有新消息
-        time_since_check = (datetime.now() - st.session_state.matrix_last_check).total_seconds()
-        if time_since_check > 3:
-            st.session_state.matrix_last_check = datetime.now()
-            # 自动刷新页面以检查新消息
-            st.rerun()
+        if viewpoints and stances_dict:
+            st.markdown(f"### 📋 Consensus Matrix ({len(participants)} participants × {len(viewpoints)} viewpoints)")
+            
+            matrix_data = {}
+            for p in participants:
+                matrix_data[p] = {}
+                for vp in viewpoints:
+                    matrix_data[p][vp] = stances_dict.get(p, {}).get(vp, '△')
+            
+            df = pd.DataFrame.from_dict(matrix_data, orient='index')
+            
+            def style_cells(val):
+                if val == "✅":
+                    return 'background-color: #90EE90; color: #000; font-weight: bold; font-size: 16px; text-align: center;'
+                elif val == "❌":
+                    return 'background-color: #FFB6C6; color: #000; font-weight: bold; font-size: 16px; text-align: center;'
+                else:
+                    return 'background-color: #FFE4B5; color: #000; font-weight: bold; font-size: 14px; text-align: center;'
+            
+            try:
+                styled_df = df.style.applymap(style_cells)
+            except AttributeError:
+                styled_df = df.style.map(style_cells)
+            
+            st.dataframe(styled_df, use_container_width=True, height=400)
+            
+            # 显示共识指标
+            st.markdown("### 📈 Consensus Insights")
+            
+            # 显示前 8 个观点的指标
+            display_metrics = list(metrics.items())[:8]
+            metric_cols = st.columns(min(len(display_metrics), 4))
+            
+            for idx, (vp, metric_data) in enumerate(display_metrics):
+                with metric_cols[idx % 4]:
+                    consensus_pct = int(metric_data['consensus_level'] * 100)
+                    st.metric(
+                        vp[:18] + "..." if len(vp) > 18 else vp,
+                        f"{consensus_pct}%",
+                        delta=f"✅{metric_data['agreement']} ❌{metric_data['disagreement']} △{metric_data['neutral']}"
+                    )
+            
+            # 显示更新时间
+            last_update = cached_matrix.get("timestamp")
+            if last_update:
+                st.caption(f"⏱️ Last updated: {last_update[:19]} | 👥 {len(participants)} participants | 📌 {len(viewpoints)} viewpoints")
+    else:
+        st.info("🔄 Waiting for matrix calculation...")
+
+# 自动刷新
+if "matrix_last_check" not in st.session_state:
+    st.session_state.matrix_last_check = datetime.now()
+
+time_since_check = (datetime.now() - st.session_state.matrix_last_check).total_seconds()
+if time_since_check > 3:
+    st.session_state.matrix_last_check = datetime.now()
+    st.rerun()
