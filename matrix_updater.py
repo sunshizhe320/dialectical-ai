@@ -1,6 +1,7 @@
 """
 实时矩阵更新管理模块
 负责实时检测新消息并触发矩阵更新
+支持多人讨论和动态观点识别
 """
 
 import json
@@ -22,10 +23,10 @@ class MatrixCache:
     processed_message_count: int
     last_update_time: str
     content_hash: str
-    
+
 
 class MatrixUpdater:
-    """实时矩阵更新器"""
+    """实时矩阵更新器 - 支持多人讨论和动态观点"""
     
     def __init__(self, cache_dir: str = "matrix_cache"):
         self.cache_dir = Path(cache_dir)
@@ -101,6 +102,30 @@ class MatrixUpdater:
         # 如果有新消息，需要更新
         return current_message_count > processed_count
     
+    def should_update_viewpoints(
+        self, 
+        session_id: str, 
+        current_messages: List[Dict]
+    ) -> bool:
+        """
+        判断是否需要重新更新观点
+        当消息数量变化超过 20% 时触发重新分析
+        """
+        state = self.load_state(session_id)
+        
+        previous_count = state.get("processed_count", 0)
+        current_count = len([m for m in current_messages if m.get('user') != 'AI'])
+        
+        if current_count == 0:
+            return False
+        
+        # 第一次分析或消息增加 20% 以上
+        if previous_count == 0:
+            return True
+        
+        change_ratio = (current_count - previous_count) / current_count
+        return change_ratio > 0.2
+    
     def get_new_messages(
         self, 
         all_messages: List[Dict], 
@@ -116,7 +141,7 @@ class MatrixUpdater:
         
         return new_messages, len(user_messages)
     
-    def acquire_lock(self, session_id: str, timeout: int = 30) -> bool:
+    def acquire_lock(self, session_id: str, timeout: int = 60) -> bool:
         """获取会话锁（防止并发冲突）"""
         lock_file = self.get_lock_file(session_id)
         start_time = time.time()
@@ -126,6 +151,7 @@ class MatrixUpdater:
                 # 超时强制删除旧锁
                 try:
                     lock_file.unlink()
+                    print(f"⚠️ 强制删除超时锁: {session_id}")
                 except:
                     pass
                 break
@@ -177,6 +203,42 @@ class MatrixUpdater:
         cached_hash = cache.get("content_hash")
         return current_hash != cached_hash
     
+    def update_participant_stances(
+        self,
+        session_id: str,
+        new_viewpoints: List[str],
+        old_stances: Dict,
+        participants: List[str]
+    ) -> Dict:
+        """
+        当新增观点时，为新观点添加所有参与者的态度
+        支持动态观点添加
+        """
+        updated_stances = dict(old_stances)
+        
+        # 获取旧观点
+        old_viewpoints = []
+        if participants and old_stances:
+            first_participant = list(participants)[0]
+            if first_participant in old_stances:
+                old_viewpoints = list(old_stances[first_participant].keys())
+        
+        # 找出新增观点
+        new_viewpoint_set = set(new_viewpoints) - set(old_viewpoints)
+        
+        if new_viewpoint_set:
+            print(f"🆕 检测到 {len(new_viewpoint_set)} 个新观点")
+            
+            # 为所有参与者初始化新观点的态度
+            for participant in participants:
+                if participant not in updated_stances:
+                    updated_stances[participant] = {}
+                
+                for new_vp in new_viewpoint_set:
+                    updated_stances[participant][new_vp] = '△'
+        
+        return updated_stances
+    
     def clear_cache(self, session_id: str) -> None:
         """清空缓存"""
         cache_file = self.get_cache_file(session_id)
@@ -189,6 +251,8 @@ class MatrixUpdater:
                     f.unlink()
                 except:
                     pass
+        
+        print(f"✅ 已清空 {session_id} 的缓存")
     
     def get_update_stats(self, session_id: str) -> Dict:
         """获取更新统计信息"""
