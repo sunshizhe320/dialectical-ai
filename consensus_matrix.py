@@ -1,20 +1,21 @@
 """
-共识矩阵计算模块 - 增强版
-支持多人讨论和动态观点识别
-带有更好的 JSON 解析和后备方案
+智能共识矩阵计算模块
+支持多轮验证、引用证据、动态置信度评估
+大幅减少 LLM 幻觉
 """
 
 import json
 import re
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 class ConsensusMatrix:
-    """共识矩阵计算器"""
+    """智能共识矩阵计算器"""
     
     def __init__(self):
         self.cache = {}
+        self.verified_viewpoints = {}  # 已验证的观点缓存
     
     def extract_viewpoints_step1(
         self, 
@@ -22,7 +23,7 @@ class ConsensusMatrix:
         participants: List[str],
         llm_mode: str = "AI-Scaffolded"
     ) -> Optional[List[str]]:
-        """提取讨论中的核心观点 - 动态调整期望数量"""
+        """智能提取观点 - 带验证和证据"""
         try:
             from ai_agent import generate_response
             
@@ -30,89 +31,245 @@ class ConsensusMatrix:
             if not user_messages:
                 return None
             
-            discussion_text = "\n".join([
-                f"{m.get('user')}: {m.get('message', '')}"
-                for m in user_messages[-20:]
-            ])
-            
-            if len(discussion_text) > 3000:
-                discussion_text = discussion_text[:3000]
-            
-            # 根据消息数量动态调整观点期望
             message_count = len(user_messages)
-            if message_count == 1:
-                viewpoint_range = "exactly 1"
-                examples = "Example: 1. AI should be used in education"
-            elif message_count <= 2:
-                viewpoint_range = "1-2"
-                examples = "Example:\n1. First viewpoint\n2. Second viewpoint"
-            elif message_count <= 4:
-                viewpoint_range = "2-3"
-                examples = "Example:\n1. First viewpoint\n2. Second viewpoint\n3. Third viewpoint"
-            else:
-                viewpoint_range = "3-5"
-                examples = "Example:\n1. Viewpoint A\n2. Viewpoint B\n3. Viewpoint C"
             
-            prompt = f"""Extract the MAIN VIEWPOINTS from this discussion. 
-IMPORTANT: Extract ONLY viewpoints that are EXPLICITLY mentioned, do NOT create new ones.
-
-Number of messages: {message_count}
-Participants: {len(participants)}
-
-DISCUSSION:
-{discussion_text}
-
-TASK: Extract {viewpoint_range} distinct viewpoints that are actually discussed.
-DO NOT invent viewpoints. If only 1 viewpoint is discussed, return only 1.
-
-FORMAT:
-{examples}"""
-            
-            response = generate_response(
-                llm_mode,
-                prompt,
-                group_id="system",
-                user="System"
+            # 第一阶段：提取初始观点
+            print(f"\n📊 [第 1 阶段] 初始观点提取 (来自 {message_count} 条消息)")
+            initial_viewpoints = self._extract_initial_viewpoints(
+                user_messages, 
+                message_count, 
+                llm_mode
             )
             
-            if not response:
+            if not initial_viewpoints:
                 return None
             
-            viewpoints = self._parse_numbered_list(response)
+            print(f"  初始提取: {len(initial_viewpoints)} 个观点")
             
-            # 验证提取的观点数量合理性
-            if message_count == 1 and len(viewpoints) > 1:
-                viewpoints = viewpoints[:1]
-            elif message_count <= 2 and len(viewpoints) > 2:
-                viewpoints = viewpoints[:2]
-            elif message_count <= 4 and len(viewpoints) > 3:
-                viewpoints = viewpoints[:3]
-            elif len(viewpoints) > 5:
-                viewpoints = viewpoints[:5]
+            # 第二阶段：验证和去重
+            print(f"\n✅ [第 2 阶段] 验证观点真实性")
+            verified_viewpoints = self._verify_viewpoints(
+                initial_viewpoints,
+                user_messages,
+                llm_mode
+            )
             
-            print(f"📊 提取了 {len(viewpoints)} 个观点 (来自 {message_count} 条消息)")
+            print(f"  验证后: {len(verified_viewpoints)} 个观点")
             
-            return viewpoints if viewpoints else None
+            # 第三阶段：添加置信度评分
+            print(f"\n🎯 [第 3 阶段] 计算置信度")
+            scored_viewpoints = self._score_viewpoints(
+                verified_viewpoints,
+                user_messages,
+                llm_mode
+            )
+            
+            # 过滤低置信度观点 (< 0.5)
+            final_viewpoints = [
+                vp for vp, score in scored_viewpoints 
+                if score >= 0.5
+            ]
+            
+            print(f"  最终结果: {len(final_viewpoints)} 个高置信度观点\n")
+            
+            return final_viewpoints if final_viewpoints else None
         
         except Exception as e:
             print(f"❌ extract_viewpoints_step1 错误: {e}")
             return None
     
-    def _parse_numbered_list(self, text: str) -> List[str]:
-        """解析编号列表"""
-        items = []
-        lines = text.split('\n')
+    def _extract_initial_viewpoints(
+        self,
+        messages: List[Dict],
+        message_count: int,
+        llm_mode: str
+    ) -> List[str]:
+        """第一阶段：初始提取"""
+        from ai_agent import generate_response
         
-        for line in lines:
-            line = line.strip()
-            # 匹配 "1. text" 或 "1) text" 格式
-            match = re.match(r'^[\d]+[\.\)]\s+(.+)$', line)
+        discussion_text = "\n".join([
+            f"{m.get('user')}: {m.get('message', '')}"
+            for m in messages[-20:]
+        ])
+        
+        if len(discussion_text) > 2500:
+            discussion_text = discussion_text[:2500]
+        
+        # 根据消息数量调整期望
+        if message_count == 1:
+            range_text = "EXACTLY 1"
+        elif message_count <= 2:
+            range_text = "1-2"
+        elif message_count <= 4:
+            range_text = "1-2 (最多)"
+        else:
+            range_text = "2-3"
+        
+        prompt = f"""Extract CORE viewpoints from this discussion.
+STRICT RULE: Only extract if explicitly stated in the discussion. Do NOT invent.
+
+Messages: {message_count}
+
+DISCUSSION:
+{discussion_text}
+
+Extract {range_text} viewpoints. For each, include evidence quote.
+
+FORMAT:
+VIEWPOINT: [concise statement]
+EVIDENCE: "[quote from discussion]"
+
+---
+VIEWPOINT: [another viewpoint]
+EVIDENCE: "[quote from discussion]"
+"""
+        
+        response = generate_response(llm_mode, prompt, group_id="system", user="System")
+        
+        if not response:
+            return []
+        
+        viewpoints = self._parse_viewpoint_evidence(response)
+        return viewpoints
+    
+    def _parse_viewpoint_evidence(self, text: str) -> List[str]:
+        """解析包含证据的观点"""
+        viewpoints = []
+        
+        # 按 VIEWPOINT: 分割
+        blocks = text.split('VIEWPOINT:')
+        
+        for block in blocks[1:]:  # 跳过第一个空块
+            # 提取观点和证据
+            lines = block.strip().split('\n')
+            
+            if not lines:
+                continue
+            
+            viewpoint = lines[0].strip()
+            
+            # 查找 EVIDENCE 行
+            has_evidence = any('EVIDENCE:' in line or 'Evidence:' in line.lower() for line in lines)
+            
+            if viewpoint and len(viewpoint) > 5 and has_evidence:
+                viewpoints.append(viewpoint)
+        
+        return viewpoints
+    
+    def _verify_viewpoints(
+        self,
+        viewpoints: List[str],
+        messages: List[Dict],
+        llm_mode: str
+    ) -> List[str]:
+        """第二阶段：验证观点"""
+        from ai_agent import generate_response
+        
+        if len(viewpoints) <= 1:
+            return viewpoints
+        
+        discussion_text = "\n".join([
+            f"{m.get('user')}: {m.get('message', '')}"
+            for m in messages[-15:]
+        ])
+        
+        if len(discussion_text) > 2000:
+            discussion_text = discussion_text[:2000]
+        
+        viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(viewpoints)])
+        
+        prompt = f"""Verify which viewpoints are ACTUALLY discussed:
+
+PROPOSED VIEWPOINTS:
+{viewpoints_str}
+
+DISCUSSION:
+{discussion_text}
+
+For each viewpoint:
+- KEEP if: someone explicitly states it or clearly supports/opposes it
+- REMOVE if: not mentioned or only my interpretation
+
+Format:
+KEEP: 1, 2
+REMOVE: 3"""
+        
+        response = generate_response(llm_mode, prompt, group_id="system", user="System")
+        
+        if not response:
+            return viewpoints
+        
+        # 解析 KEEP 列表
+        keep_match = re.search(r'KEEP:\s*([0-9,\s]+)', response, re.IGNORECASE)
+        if keep_match:
+            keep_str = keep_match.group(1)
+            keep_indices = [int(x.strip()) - 1 for x in keep_str.split(',') if x.strip().isdigit()]
+            verified = [viewpoints[i] for i in keep_indices if i < len(viewpoints)]
+            return verified
+        
+        return viewpoints
+    
+    def _score_viewpoints(
+        self,
+        viewpoints: List[str],
+        messages: List[Dict],
+        llm_mode: str
+    ) -> List[Tuple[str, float]]:
+        """第三阶段：计算置信度"""
+        from ai_agent import generate_response
+        
+        if len(viewpoints) <= 1:
+            return [(vp, 1.0) for vp in viewpoints]
+        
+        discussion_text = "\n".join([
+            f"{m.get('user')}: {m.get('message', '')}"
+            for m in messages[-15:]
+        ])
+        
+        if len(discussion_text) > 2000:
+            discussion_text = discussion_text[:2000]
+        
+        viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(viewpoints)])
+        
+        prompt = f"""Rate confidence (0-100) for each viewpoint:
+
+VIEWPOINTS:
+{viewpoints_str}
+
+DISCUSSION:
+{discussion_text}
+
+Scoring:
+- 90-100: Explicitly mentioned, clear support/opposition
+- 70-89: Clearly implied, good evidence
+- 50-69: Somewhat supported, but not explicit
+- Below 50: Vague or weak evidence
+
+Format:
+1: 95
+2: 72
+3: 45"""
+        
+        response = generate_response(llm_mode, prompt, group_id="system", user="System")
+        
+        if not response:
+            return [(vp, 0.7) for vp in viewpoints]
+        
+        # 解析分数
+        scores = []
+        for line in response.split('\n'):
+            match = re.match(r'^(\d+):\s*(\d+)', line.strip())
             if match:
-                item = match.group(1).strip()
-                if len(item) > 3 and len(item) < 200:
-                    items.append(item)
+                idx = int(match.group(1)) - 1
+                score = int(match.group(2)) / 100.0
+                
+                if idx < len(viewpoints):
+                    scores.append((viewpoints[idx], score))
         
-        return items
+        if not scores:
+            return [(vp, 0.7) for vp in viewpoints]
+        
+        return scores
     
     def analyze_stances_step2(
         self,
@@ -121,7 +278,7 @@ FORMAT:
         viewpoints: List[str],
         llm_mode: str = "AI-Scaffolded"
     ) -> Optional[Dict]:
-        """分析每个参与者的态度"""
+        """智能分析态度 - 带论文和验证"""
         try:
             from ai_agent import generate_response
             
@@ -131,97 +288,87 @@ FORMAT:
                 for m in user_messages[-20:]
             ])
             
-            if len(discussion_text) > 3000:
-                discussion_text = discussion_text[:3000]
+            if len(discussion_text) > 2500:
+                discussion_text = discussion_text[:2500]
             
-            viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(viewpoints)])
-            participants_str = ", ".join(participants)
+            print(f"\n📊 [态度分析] 为 {len(participants)} 个参与者分析态度")
             
-            prompt = f"""For each participant, decide if they AGREE (✅), DISAGREE (❌), or are NEUTRAL (△) on each viewpoint.
-
-VIEWPOINTS:
-{viewpoints_str}
-
-PARTICIPANTS: {participants_str}
-
-DISCUSSION:
-{discussion_text}
-
-RULES:
-- ✅ = participant EXPLICITLY agrees or supports
-- ❌ = participant EXPLICITLY disagrees or opposes  
-- △ = participant doesn't mention it or is unclear/neutral
-
-FORMAT - Return ONLY (no other text):
-participant_name,viewpoint_number,symbol
-
-Examples:
-test,1,✅
-amber,1,❌
-test,2,△"""
+            # 为每个参与者和观点分析
+            stances_dict = {p: {} for p in participants}
             
-            response = generate_response(
-                llm_mode,
-                prompt,
-                group_id="system",
-                user="System"
-            )
+            for viewpoint in viewpoints:
+                print(f"\n  分析观点: {viewpoint[:40]}...")
+                
+                for participant in participants:
+                    stance = self._analyze_single_stance(
+                        participant,
+                        viewpoint,
+                        discussion_text,
+                        messages,
+                        llm_mode
+                    )
+                    stances_dict[participant][viewpoint] = stance
             
-            if not response:
-                return None
-            
-            stances_dict = self._parse_stance_csv(response, participants, viewpoints)
-            return stances_dict if stances_dict else None
+            print(f"\n✅ 态度分析完成\n")
+            return stances_dict
         
         except Exception as e:
             print(f"❌ analyze_stances_step2 错误: {e}")
             return None
     
-    def _parse_stance_csv(
-        self, 
-        text: str, 
-        participants: List[str],
-        viewpoints: List[str]
-    ) -> Dict:
-        """解析 CSV 格式的态度"""
+    def _analyze_single_stance(
+        self,
+        participant: str,
+        viewpoint: str,
+        discussion_text: str,
+        messages: List[Dict],
+        llm_mode: str
+    ) -> str:
+        """分析单个参与者对单个观点的态度"""
+        from ai_agent import generate_response
         
-        # 初始化所有参与者和观点为中立
-        result = {p: {vp: '△' for vp in viewpoints} for p in participants}
+        # 提取该参与者的消息
+        participant_msgs = [
+            m.get('message', '') 
+            for m in messages 
+            if m.get('user') == participant
+        ]
         
-        lines = text.strip().split('\n')
+        if not participant_msgs:
+            return '△'
         
-        for line in lines:
-            line = line.strip()
-            if not line or ',' not in line:
-                continue
-            
-            parts = [p.strip() for p in line.split(',')]
-            if len(parts) < 3:
-                continue
-            
-            participant_name = parts[0]
-            try:
-                viewpoint_idx = int(parts[1]) - 1
-            except:
-                continue
-            
-            stance = parts[2].strip()
-            
-            if stance not in ['✅', '❌', '△']:
-                continue
-            
-            # 匹配参与者
-            matched_p = None
-            for p in participants:
-                if p.lower() == participant_name.lower():
-                    matched_p = p
-                    break
-            
-            # 验证观点索引
-            if matched_p and 0 <= viewpoint_idx < len(viewpoints):
-                result[matched_p][viewpoints[viewpoint_idx]] = stance
+        participant_text = "\n".join(participant_msgs)
         
-        return result
+        prompt = f"""Analyze {participant}'s stance on this viewpoint.
+
+VIEWPOINT: {viewpoint}
+
+{participant}'s statements:
+{participant_text}
+
+STRICT RULES:
+- ✅ only if {participant} explicitly agrees/supports
+- ❌ only if {participant} explicitly disagrees/opposes
+- △ if {participant} doesn't mention it or is unclear
+
+Provide evidence quote.
+
+FORMAT:
+STANCE: [✅ or ❌ or △]
+EVIDENCE: "[quote]"
+REASONING: [brief explanation]"""
+        
+        response = generate_response(llm_mode, prompt, group_id="system", user="System")
+        
+        if not response:
+            return '△'
+        
+        # 解析态度
+        stance_match = re.search(r'STANCE:\s*([✅❌△])', response)
+        if stance_match:
+            return stance_match.group(1)
+        
+        return '△'
     
     def calculate_consensus_metrics(
         self,
