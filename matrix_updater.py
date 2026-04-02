@@ -14,44 +14,7 @@ class MatrixUpdater:
     def __init__(self, cache_dir: str = "matrix_cache"):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
-    (self, session_id: str) -> Optional[Dict]:
-        """加载缓存"""
-        try:
-            cache_file = self.get_cache_file(session_id)
-            if cache_file.exists():
-                with open(cache_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except Exception as e:
-            print(f"⚠️ 加载缓存失败: {e}")
-        return None
     
-    def save_cache(self, session_id: str, data: Dict) -> bool:
-        """保存缓存"""
-        try:
-            cache_file = self.get_cache_file(session_id)
-            with open(cache_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            print(f"❌ 保存缓存失败: {e}")
-            return False
-    
-    def load_state(self, session_id: str) -> Dict:
-        """加载状态"""
-        try:
-            state_file = self.get_state_file(session_id)
-            if state_file.exists():
-                with open(state_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except Exception as e:
-            print(f"⚠️ 加载状态失败: {e}")
-        return {"processed_count": 0}
-    
-    def save_state(self, session_id: str, processed_count: int) -> bool:
-        """保存状态"""
-        try:
-            state_file = self.get_state_file(session_id)
-            with open(state_file, 'w', encoding='utf-8
     def get_cache_file(self, session_id: str) -> Path:
         """获取缓存文件路径"""
         return self.cache_dir / f"{session_id}_matrix.json"
@@ -88,7 +51,16 @@ class MatrixUpdater:
             state_file = self.get_state_file(session_id)
             if state_file.exists():
                 with open(state_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"⚠️ 加载状态失败: {e}")
+        return {"processed_count": 0}
+    
+    def save_state(self, session_id: str, processed_count: int) -> bool:
+        """保存状态"""
+        try:
+            state_file = self.get_state_file(session_id)
+            with open(state_file, 'w', encoding='utf-8') as f:
                 json.dump({
                     "processed_count": processed_count,
                     "timestamp": datetime.now().isoformat()
