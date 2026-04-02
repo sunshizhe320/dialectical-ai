@@ -1,255 +1,341 @@
 """
-experiment_manager.py
-實驗分組管理介面
-- 批量建立 groups
-- 分配 condition（Socratic / Debater / Control）
-- 匯出實驗配置
-- 查看 & 刪除現有 groups
+讨论页面 - 实验管理和共识矩阵
 """
+
 import streamlit as st
-import sqlite3
-import csv
-import io
+import pandas as pd
 from datetime import datetime
+import time
+from pathlib import Path
+import json
+import sys
+import os
 
-DB_PATH = "chat_logs.db"
+# 添加项目路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-st.set_page_config(page_title="Experiment Manager", layout="wide")
-st.title("🔬 實驗分組管理")
+# 检查是否在讨论中
+if not st.session_state.get("in_discussion", False):
+    st.warning("请先从首页进入讨论")
+    st.switch_page("app.py")
 
-st.markdown("""
-本頁面用於建立與管理實驗分組。你可以：
-- 批量建立多個 groups（例如 A1, A2, ... B1, B2...）
-- 為每個 group 分配實驗條件（condition）
-- 匯出實驗配置作為參考
-- 查看與刪除現有分組
-""")
+# 导入自定义模块
+try:
+    from consensus_matrix import ConsensusMatrix
+    from matrix_updater import updater
+except ImportError as e:
+    st.error(f"❌ 导入模块失败: {e}")
+    st.stop()
 
-st.markdown("---")
+# 导入 AI Agent
+try:
+    from ai_agent import generate_response
+except ImportError:
+    st.error("❌ 无法导入 ai_agent")
+    st.stop()
 
-# ===== Tab 1: 批量建立分組 =====
-tab1, tab2, tab3 = st.tabs(["批量建立", "查看現有分組", "設定 Prompt"])
+st.set_page_config(
+    page_title="Dialectical Discussion",
+    page_icon="💬",
+    layout="wide"
+)
 
-with tab1:
-    st.subheader("批量建立 Groups")
+# ==================== 全局状态 ====================
+DATA_FILE = "sessions_data.json"
+
+def load_all_sessions() -> dict:
+    """加载所有会话"""
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_all_sessions(data: dict) -> None:
+    """保存所有会话"""
+    try:
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"保存会话失败: {e}")
+
+def save_message(session_id: str, user: str, role: str, message: str) -> None:
+    """保存消息"""
+    all_data = load_all_sessions()
+    if session_id not in all_data:
+        all_data[session_id] = {"messages": [], "participants": []}
     
-    st.write("**方式 1：按模式快速建立**")
-    col1, col2, col3 = st.columns(3)
+    all_data[session_id]["messages"].append({
+        "user": user,
+        "role": role,
+        "message": message,
+        "timestamp": datetime.now().isoformat()
+    })
+    save_all_sessions(all_data)
+
+def get_history(session_id: str, limit: int = 20) -> list:
+    """获取消息历史"""
+    all_data = load_all_sessions()
+    messages = all_data.get(session_id, {}).get("messages", [])
+    return messages[-limit:]
+
+def get_session_participants(session_id: str) -> list:
+    """获取会话参与者"""
+    all_data = load_all_sessions()
+    messages = all_data.get(session_id, {}).get("messages", [])
+    participants = list(set([m.get('user') for m in messages if m.get('user') != 'AI']))
+    return sorted(participants)
+
+def add_participant(session_id: str, user: str) -> None:
+    """添加参与者"""
+    all_data = load_all_sessions()
+    if session_id not in all_data:
+        all_data[session_id] = {"messages": [], "participants": []}
+    
+    if user not in all_data[session_id]["participants"]:
+        all_data[session_id]["participants"].append(user)
+    
+    save_all_sessions(all_data)
+
+def stream_ai_response(response: str, placeholder) -> None:
+    """流式显示 AI 响应"""
+    full_response = ""
+    for chunk in response.split():
+        full_response += chunk + " "
+        placeholder.markdown(full_response + "▌")
+        time.sleep(0.01)
+    placeholder.markdown(full_response)
+
+# ==================== 侧边栏 ====================
+with st.sidebar:
+    st.markdown("## 🤖 Dialectical AI")
+    
+    # 会话信息
+    st.markdown("### 📋 Session Information")
+    st.info(f"""
+**Group Name:** {st.session_state.group_name}
+
+**Your Name:** {st.session_state.user_name}
+
+**AI Mode:** {st.session_state.ai_mode}
+    """)
+    
+    # 获取会话数据
+    session_id = st.session_state.session_id
+    all_data = load_all_sessions()
+    current_sess = all_data.get(session_id, {})
+    messages = current_sess.get("messages", [])
+    participants = get_session_participants(session_id)
+    
+    st.markdown("### 📊 Session Status")
+    col1, col2 = st.columns(2)
     with col1:
-        num_groups_per_condition = st.number_input(
-            "每個 condition 建立幾個 groups？", 
-            min_value=1, max_value=20, value=3, step=1
-        )
+        st.metric("📨 Messages", len(messages))
     with col2:
-        prefix = st.text_input("Group 前綴（例如 A, B, C）", value="Exp")
-    with col3:
-        st.write("")  # 對齊
-        st.write("")
+        st.metric("👥 Participants", len(participants))
     
-    # 預覽建立的 groups
-    st.write("**預覽即將建立的分組：**")
-    conditions = ["AI-Scaffolded", "AI-Free-Debater", "Control"]
-    preview_groups = []
-    for cond_idx, cond in enumerate(conditions):
-        for i in range(1, num_groups_per_condition + 1):
-            group_id = f"{prefix}_{cond[0]}{i}"  # 例如 Exp_S1, Exp_F1, Exp_C1
-            preview_groups.append({"Group ID": group_id, "Condition": cond})
+    user_msg_count = len([m for m in messages if m.get('user') != 'AI'])
+    st.metric("💬 User Discussions", user_msg_count)
     
-    preview_df = __import__('pandas').DataFrame(preview_groups)
-    st.dataframe(preview_df, use_container_width=True)
-    
-    if st.button("✓ 建立上述所有 Groups"):
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        created_count = 0
-        
-        for group_info in preview_groups:
-            group_id = group_info["Group ID"]
-            condition = group_info["Condition"]
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            try:
-                c.execute("""
-                INSERT INTO groups (group_id, condition, updated_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(group_id) DO NOTHING
-                """, (group_id, condition, ts))
-                created_count += 1
-            except Exception as e:
-                st.error(f"建立 {group_id} 失敗：{e}")
-        
-        conn.commit()
-        conn.close()
-        st.success(f"✓ 成功建立 {created_count} 個 groups！")
-    
-    st.markdown("---")
-    
-    st.write("**方式 2：自訂建立**")
-    st.write("若需要更自訂的分組（例如 GroupA, GroupB, ...），請在下方輸入：")
-    
-    custom_groups_text = st.text_area(
-        "輸入自訂 groups（每行一個，格式：group_id,condition）",
-        placeholder="Group_001,AI-Scaffolded\nGroup_002,AI-Free-Debater\nGroup_003,Control",
-        height=150
-    )
-    
-    if st.button("✓ 建立自訂 Groups"):
-        if not custom_groups_text.strip():
-            st.warning("請輸入分組資訊")
+    # 时间显示（如果需要）
+    st.markdown("### ⏱️ Time Remaining")
+    st.warning(f"**33:42**")
+
+# ==================== 主界面 ====================
+st.markdown(f"## 💬 {st.session_state.group_name} Discussion")
+st.markdown(f"**👥 Participants:** {', '.join(participants) if participants else 'Waiting for participants...'}")
+st.markdown(f"**🎯 Topic:** {st.session_state.discussion_topic}")
+
+st.info("💡 **Tip:** Use `@AI` in your message to mention AI for help.")
+
+# ==================== 显示消息 ====================
+message_container = st.container()
+with message_container:
+    for msg in messages:
+        if msg.get('role') == 'assistant':
+            with st.chat_message("assistant", avatar="🤖"):
+                st.markdown(msg.get('message', ''))
         else:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            created_count = 0
-            error_count = 0
+            with st.chat_message("user", avatar="👤"):
+                st.markdown(f"**{msg.get('user')}**: {msg.get('message', '')}")
+
+# ==================== 输入区域 ====================
+st.divider()
+
+col_input, col_buttons = st.columns([0.85, 0.15])
+
+with col_input:
+    user_input = st.text_area(
+        "Share your thoughts...",
+        height=100,
+        placeholder="Use @AI to mention AI",
+        label_visibility="collapsed",
+        key="user_input"
+    )
+
+with col_buttons:
+    send_btn = st.button("📤 Send", use_container_width=True)
+    clear_btn = st.button("🗑️ Clear", use_container_width=True)
+
+# 处理发送
+if send_btn:
+    if user_input.strip():
+        session_id = st.session_state.session_id
+        
+        # 保存用户消息
+        save_message(session_id, st.session_state.user_name, "user", user_input)
+        add_participant(session_id, st.session_state.user_name)
+        
+        # 检查是否需要 AI 回复
+        ai_triggered = "@AI" in user_input or "@ai" in user_input
+        
+        if ai_triggered and st.session_state.ai_mode != "Control":
+            conversation_history = get_history(session_id, limit=20)
             
-            for line in custom_groups_text.strip().split("\n"):
-                if not line.strip():
-                    continue
-                parts = line.split(",")
-                if len(parts) != 2:
-                    st.warning(f"格式錯誤：{line}")
-                    error_count += 1
-                    continue
+            with st.spinner("🤖 AI 思考中..."):
+                try:
+                    ai_reply = generate_response(
+                        st.session_state.ai_mode,
+                        user_input,
+                        group_id=session_id,
+                        user=st.session_state.user_name,
+                        conversation_history=conversation_history
+                    )
+                    
+                    if ai_reply:
+                        save_message(session_id, "AI", "assistant", ai_reply)
                 
-                group_id = parts[0].strip()
-                condition = parts[1].strip()
-                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                except Exception as e:
+                    st.error(f"❌ AI 错误: {str(e)}")
+        
+        time.sleep(0.5)
+        st.rerun()
+
+if clear_btn:
+    st.rerun()
+
+# ==================== 共识矩阵 ====================
+st.divider()
+st.markdown("## 📊 Consensus Matrix")
+
+session_id = st.session_state.session_id
+all_data = load_all_sessions()
+current_sess = all_data.get(session_id, {})
+messages = current_sess.get("messages", [])
+participants = get_session_participants(session_id)
+
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("📨 Messages", len(messages))
+with col2:
+    st.metric("👥 Participants", len(participants))
+with col3:
+    user_msg_count = len([m for m in messages if m.get('user') != 'AI'])
+    st.metric("💬 Discussions", user_msg_count)
+with col4:
+    if st.button("🔄 Refresh", key="refresh_matrix"):
+        try:
+            updater.clear_cache(session_id)
+            st.success("✓ Cache cleared")
+        except Exception as e:
+            st.warning(f"清空缓存: {e}")
+        st.rerun()
+
+user_message_count = len([m for m in messages if m.get('user') != 'AI'])
+
+if user_message_count < 1:
+    st.warning(f"⏳ 等待讨论... (至少需要 1 条消息)")
+else:
+    try:
+        matrix_calc = ConsensusMatrix()
+        
+        if updater.should_update(session_id, messages):
+            with st.spinner("📊 提取并简化观点..."):
+                viewpoints_pairs = matrix_calc.extract_and_summarize_viewpoints(
+                    messages,
+                    participants,
+                    llm_mode=st.session_state.ai_mode
+                )
+            
+            if viewpoints_pairs:
+                simplified_vps = [vp[1] for vp in viewpoints_pairs]
+                
+                with st.spinner("📈 分析态度..."):
+                    stances_dict = matrix_calc.analyze_stances_step2(
+                        messages,
+                        participants,
+                        viewpoints_pairs,
+                        llm_mode=st.session_state.ai_mode
+                    )
+                
+                if stances_dict:
+                    cache_data = {
+                        "viewpoints_full": [vp[0] for vp in viewpoints_pairs],
+                        "viewpoints_simplified": simplified_vps,
+                        "stances": stances_dict,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    updater.save_cache(session_id, cache_data)
+                    updater.save_state(session_id, user_message_count)
+                    st.success("✅ 矩阵已更新!")
+        
+        cached_matrix = updater.load_cache(session_id)
+        
+        if cached_matrix:
+            viewpoints_simplified = cached_matrix.get("viewpoints_simplified", [])
+            stances_dict = cached_matrix.get("stances", {})
+            
+            if viewpoints_simplified and stances_dict:
+                st.markdown(f"### 📋 Matrix ({len(participants)}×{len(viewpoints_simplified)})")
+                
+                matrix_data = {
+                    p: {sv: stances_dict.get(p, {}).get(sv, '△') for sv in viewpoints_simplified}
+                    for p in participants
+                }
+                df = pd.DataFrame.from_dict(matrix_data, orient='index')
+                
+                def style_cells(val):
+                    if val == "✅":
+                        return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
+                    elif val == "❌":
+                        return 'background-color: #FFB6C6; text-align: center; font-weight: bold; font-size: 18px;'
+                    else:
+                        return 'background-color: #FFE4B5; text-align: center; font-weight: bold; font-size: 16px;'
                 
                 try:
-                    c.execute("""
-                    INSERT INTO groups (group_id, condition, updated_at)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(group_id) DO NOTHING
-                    """, (group_id, condition, ts))
-                    created_count += 1
-                except Exception as e:
-                    st.error(f"建立 {group_id} 失敗：{e}")
-                    error_count += 1
-            
-            conn.commit()
-            conn.close()
-            st.success(f"✓ 成功建立 {created_count} 個 groups！（{error_count} 個失敗）")
+                    styled_df = df.style.applymap(style_cells)
+                except:
+                    styled_df = df.style.map(style_cells)
+                
+                st.dataframe(styled_df, use_container_width=True, height=200)
+                
+                st.divider()
+                col1, col2, col3 = st.columns([1, 2, 1])
+                
+                with col1:
+                    st.markdown("**Legend:**")
+                with col2:
+                    st.markdown("""
+- ✅ Support / Mentioned
+- △ Neutral / Balanced
+- ❌ Oppose
+                    """)
+                with col3:
+                    st.caption(
+                        f"⏱️ {cached_matrix.get('timestamp', '')[:19]}\n"
+                        f"👥 {len(participants)} | 📌 {len(viewpoints_simplified)}"
+                    )
+    
+    except Exception as e:
+        st.error(f"❌ 矩阵显示错误: {e}")
 
-# ===== Tab 2: 查看現有分組 =====
-with tab2:
-    st.subheader("現有 Groups")
-    
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT group_id, condition, updated_at FROM groups ORDER BY group_id")
-    groups = c.fetchall()
-    conn.close()
-    
-    if not groups:
-        st.info("暫無 groups，請先在「批量建立」頁面建立。")
-    else:
-        # 轉成 DataFrame 顯示
-        import pandas as pd
-        df_groups = pd.DataFrame(groups, columns=["Group ID", "Condition", "Last Updated"])
-        st.dataframe(df_groups, use_container_width=True)
-        
-        # 統計資訊
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("總 Groups", len(groups))
-        with col2:
-            socratic_count = len([g for g in groups if g[1] == "AI-Scaffolded"])
-            st.metric("Socratic", socratic_count)
-        with col3:
-            debater_count = len([g for g in groups if g[1] == "AI-Free-Debater"])
-            st.metric("Free Debater", debater_count)
-        with col4:
-            control_count = len([g for g in groups if g[1] == "Control"])
-            st.metric("Control", control_count)
-        
-        st.markdown("---")
-        
-        # 匯出為 CSV
-        st.write("**匯出實驗配置**")
-        buffer = io.StringIO()
-        writer = csv.writer(buffer)
-        writer.writerow(["Group ID", "Condition", "Last Updated"])
-        for group in groups:
-            writer.writerow(group)
-        
-        st.download_button(
-            "📥 下載實驗配置 CSV",
-            data=buffer.getvalue(),
-            file_name=f"experiment_groups_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )
-        
-        st.markdown("---")
-        
-        # 刪除選項（謹慎使用）
-        st.write("**刪除 Groups（謹慎使用）**")
-        if st.checkbox("我要刪除某個 group（包括其對話紀錄）"):
-            group_to_delete = st.selectbox(
-                "選擇要刪除的 group",
-                [g[0] for g in groups]
-            )
-            
-            if st.button(f"🗑️ 確認刪除 {group_to_delete}"):
-                conn = sqlite3.connect(DB_PATH)
-                c = conn.cursor()
-                c.execute("DELETE FROM messages WHERE group_id = ?", (group_to_delete,))
-                c.execute("DELETE FROM groups WHERE group_id = ?", (group_to_delete,))
-                conn.commit()
-                conn.close()
-                st.success(f"✓ 已刪除 {group_to_delete} 及其所有��話紀錄")
-                st.rerun()
+# 自动刷新
+if "matrix_last_check" not in st.session_state:
+    st.session_state.matrix_last_check = datetime.now()
 
-# ===== Tab 3: 設定 Prompt =====
-with tab3:
-    st.subheader("設定預設 Prompts")
-    
-    st.write("在此設定各 condition 的預設 system prompt（可選，會用於新建立的 groups）")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("**AI-Scaffolded Prompt**")
-        scaffolded_prompt = st.text_area(
-            "Socratic 教學助理 prompt",
-            value=(
-                "你是一個蘇格拉底式的教學助理。"
-                "你主要提出引導性問題，幫助學生反思與拆解論點，而非給出直接答案。"
-                "請問明確並循序地提出問題，引導學生檢驗假設與證據。"
-            ),
-            height=150,
-            key="scaffolded"
-        )
-    
-    with col2:
-        st.write("**AI-Free-Debater Prompt**")
-        debater_prompt = st.text_area(
-            "積極辯手 prompt",
-            value=(
-                "你是一名積極辯手，會提出與學生不同的立場與反駁，"
-                "並要求學生給予證據來支持其主張。保持禮貌且具建設性。"
-            ),
-            height=150,
-            key="debater"
-        )
-    
-    st.write("**Control Condition Prompt**（通常不使用 AI 干預）")
-    control_prompt = st.text_area(
-        "Control 組 prompt",
-        value="（此組為控制組，系統不提供 AI 干預。）",
-        height=100,
-        key="control"
-    )
-    
-    if st.button("💾 儲存 Prompts 為預設"):
-        # 儲存到本地配置檔（簡易版，直接存成文本）
-        config = {
-            "AI-Scaffolded": scaffolded_prompt,
-            "AI-Free-Debater": debater_prompt,
-            "Control": control_prompt
-        }
-        import json
-        with open("prompt_config.json", "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
-        st.success("✓ 已儲存預設 prompts！")
-    
-    st.info("💡 提示：這些預設 prompts 可在建立新 groups 時自動使用，或在主頁面手動套用。")
+time_since_check = (datetime.now() - st.session_state.matrix_last_check).total_seconds()
+if time_since_check > 5:
+    st.session_state.matrix_last_check = datetime.now()
+    st.rerun()
