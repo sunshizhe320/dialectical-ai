@@ -22,7 +22,7 @@ class ConsensusMatrix:
         participants: List[str],
         llm_mode: str = "AI-Scaffolded"
     ) -> Optional[List[str]]:
-        """提取讨论中的核心观点"""
+        """提取讨论中的核心观点 - 动态调整期望数量"""
         try:
             from ai_agent import generate_response
             
@@ -38,19 +38,35 @@ class ConsensusMatrix:
             if len(discussion_text) > 3000:
                 discussion_text = discussion_text[:3000]
             
-            prompt = f"""Extract the MAIN VIEWPOINTS from this discussion. List each viewpoint on a new line starting with a number.
+            # 根据消息数量动态调整观点期望
+            message_count = len(user_messages)
+            if message_count == 1:
+                viewpoint_range = "exactly 1"
+                examples = "Example: 1. AI should be used in education"
+            elif message_count <= 2:
+                viewpoint_range = "1-2"
+                examples = "Example:\n1. First viewpoint\n2. Second viewpoint"
+            elif message_count <= 4:
+                viewpoint_range = "2-3"
+                examples = "Example:\n1. First viewpoint\n2. Second viewpoint\n3. Third viewpoint"
+            else:
+                viewpoint_range = "3-5"
+                examples = "Example:\n1. Viewpoint A\n2. Viewpoint B\n3. Viewpoint C"
+            
+            prompt = f"""Extract the MAIN VIEWPOINTS from this discussion. 
+IMPORTANT: Extract ONLY viewpoints that are EXPLICITLY mentioned, do NOT create new ones.
+
+Number of messages: {message_count}
+Participants: {len(participants)}
 
 DISCUSSION:
 {discussion_text}
 
-TASK: Extract 2-5 distinct viewpoints that people are discussing.
+TASK: Extract {viewpoint_range} distinct viewpoints that are actually discussed.
+DO NOT invent viewpoints. If only 1 viewpoint is discussed, return only 1.
 
-FORMAT - Return ONLY this:
-1. First viewpoint
-2. Second viewpoint
-3. Third viewpoint
-
-Do NOT return JSON, just numbered list."""
+FORMAT:
+{examples}"""
             
             response = generate_response(
                 llm_mode,
@@ -63,6 +79,19 @@ Do NOT return JSON, just numbered list."""
                 return None
             
             viewpoints = self._parse_numbered_list(response)
+            
+            # 验证提取的观点数量合理性
+            if message_count == 1 and len(viewpoints) > 1:
+                viewpoints = viewpoints[:1]
+            elif message_count <= 2 and len(viewpoints) > 2:
+                viewpoints = viewpoints[:2]
+            elif message_count <= 4 and len(viewpoints) > 3:
+                viewpoints = viewpoints[:3]
+            elif len(viewpoints) > 5:
+                viewpoints = viewpoints[:5]
+            
+            print(f"📊 提取了 {len(viewpoints)} 个观点 (来自 {message_count} 条消息)")
+            
             return viewpoints if viewpoints else None
         
         except Exception as e:
@@ -121,16 +150,15 @@ DISCUSSION:
 RULES:
 - ✅ = participant EXPLICITLY agrees or supports
 - ❌ = participant EXPLICITLY disagrees or opposes  
-- △ = participant doesn't mention it or is unclear
+- △ = participant doesn't mention it or is unclear/neutral
 
-FORMAT - Return ONLY:
+FORMAT - Return ONLY (no other text):
 participant_name,viewpoint_number,symbol
 
 Examples:
 test,1,✅
-test,2,△
 amber,1,❌
-amber,2,✅"""
+test,2,△"""
             
             response = generate_response(
                 llm_mode,
@@ -173,13 +201,12 @@ amber,2,✅"""
             
             participant_name = parts[0]
             try:
-                viewpoint_idx = int(parts[1]) - 1  # 转换为 0-based index
+                viewpoint_idx = int(parts[1]) - 1
             except:
                 continue
             
             stance = parts[2].strip()
             
-            # 验证态度符号
             if stance not in ['✅', '❌', '△']:
                 continue
             
