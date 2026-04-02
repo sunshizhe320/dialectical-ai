@@ -1,9 +1,11 @@
 """
-共识矩阵计算模块 - 完整版本
+共识矩阵计算模块 - 增强版
 支持多人讨论和动态观点识别
+带有更好的 JSON 解析和后备方案
 """
 
 import json
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -36,13 +38,19 @@ class ConsensusMatrix:
             if len(discussion_text) > 3000:
                 discussion_text = discussion_text[:3000]
             
-            prompt = f"""Extract the MAIN VIEWPOINTS from this discussion.
+            prompt = f"""Extract the MAIN VIEWPOINTS from this discussion. List each viewpoint on a new line starting with a number.
 
 DISCUSSION:
 {discussion_text}
 
-Extract 1-5 distinct viewpoints. Format as JSON:
-{{"viewpoints": ["viewpoint1", "viewpoint2", ...]}}"""
+TASK: Extract 2-5 distinct viewpoints that people are discussing.
+
+FORMAT - Return ONLY this:
+1. First viewpoint
+2. Second viewpoint
+3. Third viewpoint
+
+Do NOT return JSON, just numbered list."""
             
             response = generate_response(
                 llm_mode,
@@ -54,23 +62,28 @@ Extract 1-5 distinct viewpoints. Format as JSON:
             if not response:
                 return None
             
-            try:
-                start = response.find('{')
-                end = response.rfind('}') + 1
-                if start >= 0 and end > start:
-                    json_str = response[start:end]
-                    data = json.loads(json_str)
-                    viewpoints = data.get('viewpoints', [])
-                    viewpoints = [v.strip() for v in viewpoints if v.strip()]
-                    return viewpoints[:10] if viewpoints else None
-            except:
-                pass
-            
-            return None
+            viewpoints = self._parse_numbered_list(response)
+            return viewpoints if viewpoints else None
         
         except Exception as e:
             print(f"❌ extract_viewpoints_step1 错误: {e}")
             return None
+    
+    def _parse_numbered_list(self, text: str) -> List[str]:
+        """解析编号列表"""
+        items = []
+        lines = text.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            # 匹配 "1. text" 或 "1) text" 格式
+            match = re.match(r'^[\d]+[\.\)]\s+(.+)$', line)
+            if match:
+                item = match.group(1).strip()
+                if len(item) > 3 and len(item) < 200:
+                    items.append(item)
+        
+        return items
     
     def analyze_stances_step2(
         self,
@@ -93,20 +106,31 @@ Extract 1-5 distinct viewpoints. Format as JSON:
                 discussion_text = discussion_text[:3000]
             
             viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(viewpoints)])
+            participants_str = ", ".join(participants)
             
-            prompt = f"""Analyze each participant's stance on these viewpoints.
+            prompt = f"""For each participant, decide if they AGREE (✅), DISAGREE (❌), or are NEUTRAL (△) on each viewpoint.
 
 VIEWPOINTS:
 {viewpoints_str}
 
+PARTICIPANTS: {participants_str}
+
 DISCUSSION:
 {discussion_text}
 
-For each participant and viewpoint, use:
-✅ = agrees, ❌ = disagrees, △ = neutral
+RULES:
+- ✅ = participant EXPLICITLY agrees or supports
+- ❌ = participant EXPLICITLY disagrees or opposes  
+- △ = participant doesn't mention it or is unclear
 
-Return JSON:
-{{"stances": {{"participant_name": {{"viewpoint": "✅"}}, ...}}}}"""
+FORMAT - Return ONLY:
+participant_name,viewpoint_number,symbol
+
+Examples:
+test,1,✅
+test,2,△
+amber,1,❌
+amber,2,✅"""
             
             response = generate_response(
                 llm_mode,
@@ -118,38 +142,59 @@ Return JSON:
             if not response:
                 return None
             
-            try:
-                start = response.find('{')
-                end = response.rfind('}') + 1
-                if start >= 0 and end > start:
-                    json_str = response[start:end]
-                    data = json.loads(json_str)
-                    stances = data.get('stances', {})
-                    
-                    # 确保所有参与者和观点都有数据
-                    result = {}
-                    for p in participants:
-                        result[p] = {}
-                        for vp in viewpoints:
-                            stance = '△'
-                            if p in stances:
-                                if isinstance(stances[p], dict):
-                                    for key, val in stances[p].items():
-                                        if vp.lower() in key.lower() or key.lower() in vp.lower():
-                                            stance = val if val in ['✅', '❌', '△'] else '△'
-                                            break
-                            result[p][vp] = stance
-                    
-                    return result
-            except:
-                pass
-            
-            # 返回默认值
-            return {p: {vp: '△' for vp in viewpoints} for p in participants}
+            stances_dict = self._parse_stance_csv(response, participants, viewpoints)
+            return stances_dict if stances_dict else None
         
         except Exception as e:
             print(f"❌ analyze_stances_step2 错误: {e}")
             return None
+    
+    def _parse_stance_csv(
+        self, 
+        text: str, 
+        participants: List[str],
+        viewpoints: List[str]
+    ) -> Dict:
+        """解析 CSV 格式的态度"""
+        
+        # 初始化所有参与者和观点为中立
+        result = {p: {vp: '△' for vp in viewpoints} for p in participants}
+        
+        lines = text.strip().split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line or ',' not in line:
+                continue
+            
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) < 3:
+                continue
+            
+            participant_name = parts[0]
+            try:
+                viewpoint_idx = int(parts[1]) - 1  # 转换为 0-based index
+            except:
+                continue
+            
+            stance = parts[2].strip()
+            
+            # 验证态度符号
+            if stance not in ['✅', '❌', '△']:
+                continue
+            
+            # 匹配参与者
+            matched_p = None
+            for p in participants:
+                if p.lower() == participant_name.lower():
+                    matched_p = p
+                    break
+            
+            # 验证观点索引
+            if matched_p and 0 <= viewpoint_idx < len(viewpoints):
+                result[matched_p][viewpoints[viewpoint_idx]] = stance
+        
+        return result
     
     def calculate_consensus_metrics(
         self,
