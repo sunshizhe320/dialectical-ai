@@ -773,7 +773,7 @@ else:
                 if clear_btn:
                     st.rerun()
         
-        # ========== Analysis & Consensus Matrix (实时更新版) ==========
+        # ========== Analysis & Consensus Matrix ==========
         st.divider()
         st.markdown("## 📊 Consensus Matrix")
         
@@ -782,7 +782,7 @@ else:
         messages = current_sess.get("messages", [])
         participants = get_session_participants(st.session_state.session_id)
         
-        # 显示实时状态
+        # 显示状态
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("📨 Messages", len(messages))
@@ -814,59 +814,69 @@ else:
             session_id = st.session_state.session_id
             matrix_calc = ConsensusMatrix()
             
+            # 【关键】先尝试加载全局缓存
+            print(f"\n📡 设备检查 - 加载全局矩阵...")
+            cached_matrix = updater.load_global_matrix(session_id)
+            
             # 判断是否需要更新
             if updater.should_update(session_id, messages):
-                print(f"\n🔄 检测到新消息，更新矩阵...")
+                print(f"🔄 有新消息，计算矩阵...")
                 
-                with st.spinner("📊 提取观点..."):
-                    viewpoints = matrix_calc.extract_viewpoints_step1(
+                with st.spinner("📊 提取并简化观点..."):
+                    viewpoints_pairs = matrix_calc.extract_and_summarize_viewpoints(
                         messages,
                         participants,
                         llm_mode=mode
                     )
                 
-                if viewpoints:
-                    st.success(f"✅ 识别 {len(viewpoints)} 个观点")
+                if viewpoints_pairs:
+                    simplified_vps = [vp[1] for vp in viewpoints_pairs]
                     
                     with st.spinner("📈 分析态度..."):
                         stances_dict = matrix_calc.analyze_stances_step2(
                             messages,
                             participants,
-                            viewpoints,
+                            viewpoints_pairs,
                             llm_mode=mode
                         )
                     
                     if stances_dict:
                         metrics = matrix_calc.calculate_consensus_metrics(
-                            viewpoints,
+                            simplified_vps,
                             stances_dict
                         )
                         
-                        # 保存
+                        # 【关键】保存到全局缓存 - 所有设备共用
                         cache_data = {
-                            "viewpoints": viewpoints,
+                            "viewpoints_full": [vp[0] for vp in viewpoints_pairs],
+                            "viewpoints_simplified": simplified_vps,
                             "stances": stances_dict,
                             "metrics": metrics,
+                            "message_count": len(messages),
                             "timestamp": datetime.now().isoformat()
                         }
-                        updater.save_cache(session_id, cache_data)
-                        updater.save_state(session_id, user_message_count, "")
-                        st.success("✅ 表格已更新!")
+                        updater.save_global_matrix(session_id, cache_data)
+                        updater.save_state(session_id, user_message_count, cache_data.get('version', 0))
+                        
+                        cached_matrix = cache_data
+                        st.success("✅ 全局矩阵已更新!")
             
-            # 显示表格
-            cached_matrix = updater.load_cache(session_id)
-            
+            # 【显示矩阵】- 使用全局缓存
             if cached_matrix:
-                viewpoints = cached_matrix.get("viewpoints", [])
+                viewpoints_full = cached_matrix.get("viewpoints_full", [])
+                viewpoints_simplified = cached_matrix.get("viewpoints_simplified", [])
                 stances_dict = cached_matrix.get("stances", {})
                 
-                if viewpoints and stances_dict:
-                    # 【简洁标题】
-                    st.markdown(f"### 📋 Matrix ({len(participants)}×{len(viewpoints)})")
+                if viewpoints_simplified and stances_dict:
+                    # 显示版本信息（调试用）
+                    version = cached_matrix.get('version', 'unknown')
+                    print(f"✓ 显示矩阵版本: {version}")
                     
-                    # 构建矩阵
+                    st.markdown(f"### 📋 Matrix ({len(participants)}×{len(viewpoints_simplified)})")
+                    
+                    # 构建表格
                     matrix_data = {
-                        p: {vp: stances_dict.get(p, {}).get(vp, '△') for vp in viewpoints}
+                        p: {sv: stances_dict.get(p, {}).get(sv, '△') for sv in viewpoints_simplified}
                         for p in participants
                     }
                     df = pd.DataFrame.from_dict(matrix_data, orient='index')
@@ -884,33 +894,24 @@ else:
                     except:
                         styled_df = df.style.map(style_cells)
                     
-                    # 【只显示表格】
-                    st.dataframe(
-                        styled_df,
-                        use_container_width=True,
-                        height=200
-                    )
+                    st.dataframe(styled_df, use_container_width=True, height=200)
                     
-                    # 【底部图例】
+                    # 底部图例
                     st.divider()
-                    
-                    col1, col2, col3 = st.columns(3)
+                    col1, col2, col3 = st.columns([1, 2, 1])
                     
                     with col1:
                         st.markdown("**Legend:**")
-                    
                     with col2:
                         st.markdown("""
-                        - ✅ Support / Mentioned
-                        - △ Neutral / Balanced
-                        - ❌ Oppose
+- ✅ Support / Mentioned
+- △ Neutral / Balanced
+- ❌ Oppose
                         """)
-                    
                     with col3:
                         st.caption(
                             f"⏱️ {cached_matrix.get('timestamp', '')[:19]}\n"
-                            f"👥 {len(participants)} participants | "
-                            f"📌 {len(viewpoints)} viewpoints"
+                            f"👥 {len(participants)} | 📌 {len(viewpoints_simplified)}"
                         )
         
         # 自动刷新
