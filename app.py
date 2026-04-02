@@ -792,99 +792,87 @@ else:
             user_msg_count = len([m for m in messages if m.get('user') != 'AI'])
             st.metric("💬 Discussions", user_msg_count)
         with col4:
-            if st.button("🔄 Refresh", key="refresh_matrix"):
-                from matrix_updater import updater
-                updater.clear_cache(st.session_state.session_id)
+            if st.button("🔄 Refresh Matrix", key="refresh_matrix"):
                 st.rerun()
         
         user_message_count = len([m for m in messages if m.get('user') != 'AI'])
         
         if user_message_count < 1:
-            st.warning(f"⏳ Waiting for discussion... (need at least 1 message)")
+            st.warning(f"⏳ 等待讨论... (至少需要 1 条消息)")
         else:
-            from matrix_updater import updater
-            from consensus_matrix import ConsensusMatrix
-            import pandas as pd
-            import sys
-            import importlib
-            
-            # 强制重载模块
-            if 'consensus_matrix' in sys.modules:
-                importlib.reload(sys.modules['consensus_matrix'])
-            
-            session_id = st.session_state.session_id
-            matrix_calc = ConsensusMatrix()
-            
-            should_reanalyze = updater.should_update_viewpoints(session_id, messages)
-            
-            if should_reanalyze:
-                st.info("🔄 Analyzing discussion...")
+            try:
+                from consensus_matrix import ConsensusMatrix
+                import pandas as pd
                 
-                if updater.acquire_lock(session_id, timeout=60):
-                    try:
-                        if updater.should_update_viewpoints(session_id, messages):
-                            with st.spinner("📊 Extracting viewpoints..."):
-                                viewpoints = matrix_calc.extract_viewpoints_step1(
-                                    messages,
-                                    participants,
-                                    llm_mode=mode
-                                )
-                            
-                            if viewpoints:
-                                st.success(f"✅ Found {len(viewpoints)} viewpoints")
-                                
-                                with st.spinner("📈 Analyzing stances..."):
-                                    stances_dict = matrix_calc.analyze_stances_step2(
-                                        messages,
-                                        participants,
-                                        viewpoints,
-                                        llm_mode=mode
-                                    )
-                                
-                                if stances_dict:
-                                    metrics = matrix_calc.calculate_consensus_metrics(
-                                        viewpoints,
-                                        stances_dict
-                                    )
-                                    
-                                    cache_data = {
-                                        "viewpoints": viewpoints,
-                                        "stances": stances_dict,
-                                        "metrics": metrics,
-                                        "timestamp": datetime.now().isoformat()
-                                    }
-                                    updater.save_cache(session_id, cache_data)
-                                    updater.update_state(session_id, user_message_count, len(viewpoints))
-                                    st.success("✅ Matrix updated!")
-                    except Exception as e:
-                        st.error(f"❌ 错误: {str(e)}")
-                    finally:
-                        updater.release_lock(session_id)
-            
-            cached_matrix = updater.load_cache(session_id)
-            
-            if cached_matrix:
-                viewpoints = cached_matrix.get("viewpoints", [])
-                stances_dict = cached_matrix.get("stances", {})
-                metrics = cached_matrix.get("metrics", {})
+                session_id = st.session_state.session_id
+                matrix_calc = ConsensusMatrix()
                 
-                if viewpoints and stances_dict:
-                    st.markdown(f"### 📋 Matrix ({len(participants)}×{len(viewpoints)})")
+                # 每次都重新分析（实时更新）
+                print("\n" + "="*50)
+                print("🔄 重新分析矩阵...")
+                print("="*50)
+                
+                with st.spinner("📊 提取并简化观点..."):
+                    viewpoints_pairs = matrix_calc.extract_and_simplify_viewpoints(
+                        messages,
+                        participants,
+                        llm_mode=mode
+                    )
+                
+                if viewpoints_pairs:
+                    simplified_vps = [vp[1] for vp in viewpoints_pairs]
                     
-                    matrix_data = {p: {vp: stances_dict.get(p, {}).get(vp, '△') for vp in viewpoints} for p in participants}
-                    df = pd.DataFrame.from_dict(matrix_data, orient='index')
+                    with st.spinner("📈 分析态度..."):
+                        stances_dict = matrix_calc.analyze_stances(
+                            messages,
+                            participants,
+                            viewpoints_pairs,
+                            llm_mode=mode
+                        )
                     
-                    def style_cells(val):
-                        if val == "✅":
-                            return 'background-color: #90EE90; text-align: center; font-weight: bold;'
-                        elif val == "❌":
-                            return 'background-color: #FFB6C6; text-align: center; font-weight: bold;'
-                        else:
-                            return 'background-color: #FFE4B5; text-align: center;'
-                    
-                    try:
-                        styled_df = df.style.applymap(style_cells)
-                    except:
-                        styled_df = df.style.map(style_cells)
-                    
-                    st.dataframe(styled_df, use_container_width=True)    
+                    if stances_dict:
+                        st.markdown(f"### 📋 Matrix ({len(participants)}×{len(viewpoints_pairs)})")
+                        
+                        # 构建矩阵数据
+                        matrix_data = {
+                            p: {sv: stances_dict.get(p, {}).get(sv, '△') for sv in simplified_vps}
+                            for p in participants
+                        }
+                        df = pd.DataFrame.from_dict(matrix_data, orient='index')
+                        
+                        # 样式函数
+                        def style_cells(val):
+                            if val == "✅":
+                                return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
+                            elif val == "❌":
+                                return 'background-color: #FFB6C6; text-align: center; font-weight: bold; font-size: 18px;'
+                            else:
+                                return 'background-color: #FFE4B5; text-align: center; font-weight: bold; font-size: 16px;'
+                        
+                        try:
+                            styled_df = df.style.applymap(style_cells)
+                        except:
+                            styled_df = df.style.map(style_cells)
+                        
+                        st.dataframe(styled_df, use_container_width=True)
+                        
+                        # 底部图例
+                        st.divider()
+                        col1, col2, col3 = st.columns([1, 2, 1])
+                        
+                        with col1:
+                            st.markdown("**Legend:**")
+                        with col2:
+                            st.markdown("""
+- ✅ Support / Mentioned
+- △ Neutral / Balanced
+- ❌ Oppose
+                            """)
+                        with col3:
+                            st.caption(f"👥 {len(participants)} | 📌 {len(simplified_vps)}")
+                
+            except Exception as e:
+                st.error(f"❌ 矩阵显示错误: {e}")
+                import traceback
+                with st.expander("错误详情"):
+                    st.code(traceback.format_exc())
