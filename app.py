@@ -793,7 +793,6 @@ else:
             st.metric("💬 Discussions", user_msg_count)
         with col4:
             if st.button("🔄 Refresh", key="refresh_matrix"):
-                from matrix_updater import updater
                 updater.clear_cache(st.session_state.session_id)
                 st.rerun()
         
@@ -802,26 +801,11 @@ else:
         if user_message_count < 1:
             st.warning(f"⏳ 等待讨论... (至少需要 1 条消息)")
         else:
-            from matrix_updater import updater
-            from consensus_matrix import ConsensusMatrix
-            import pandas as pd
-            import sys
-            import importlib
-            
-            if 'consensus_matrix' in sys.modules:
-                importlib.reload(sys.modules['consensus_matrix'])
-            
             session_id = st.session_state.session_id
             matrix_calc = ConsensusMatrix()
             
-            # 【关键】先尝试加载全局缓存
-            print(f"\n📡 设备检查 - 加载全局矩阵...")
-            cached_matrix = updater.load_global_matrix(session_id)
-            
             # 判断是否需要更新
             if updater.should_update(session_id, messages):
-                print(f"🔄 有新消息，计算矩阵...")
-                
                 with st.spinner("📊 提取并简化观点..."):
                     viewpoints_pairs = matrix_calc.extract_and_summarize_viewpoints(
                         messages,
@@ -841,40 +825,28 @@ else:
                         )
                     
                     if stances_dict:
-                        metrics = matrix_calc.calculate_consensus_metrics(
-                            simplified_vps,
-                            stances_dict
-                        )
-                        
-                        # 【关键】保存到全局缓存 - 所有设备共用
+                        # 保存缓存
                         cache_data = {
                             "viewpoints_full": [vp[0] for vp in viewpoints_pairs],
                             "viewpoints_simplified": simplified_vps,
                             "stances": stances_dict,
-                            "metrics": metrics,
-                            "message_count": len(messages),
                             "timestamp": datetime.now().isoformat()
                         }
-                        updater.save_global_matrix(session_id, cache_data)
-                        updater.save_state(session_id, user_message_count, cache_data.get('version', 0))
-                        
-                        cached_matrix = cache_data
-                        st.success("✅ 全局矩阵已更新!")
+                        updater.save_cache(session_id, cache_data)
+                        updater.save_state(session_id, user_message_count)
+                        st.success("✅ 矩阵已更新!")
             
-            # 【显示矩阵】- 使用全局缓存
+            # 加载并显示缓存的矩阵
+            cached_matrix = updater.load_cache(session_id)
+            
             if cached_matrix:
-                viewpoints_full = cached_matrix.get("viewpoints_full", [])
                 viewpoints_simplified = cached_matrix.get("viewpoints_simplified", [])
                 stances_dict = cached_matrix.get("stances", {})
                 
                 if viewpoints_simplified and stances_dict:
-                    # 显示版本信息（调试用）
-                    version = cached_matrix.get('version', 'unknown')
-                    print(f"✓ 显示矩阵版本: {version}")
-                    
                     st.markdown(f"### 📋 Matrix ({len(participants)}×{len(viewpoints_simplified)})")
                     
-                    # 构建表格
+                    # 构建表格数据
                     matrix_data = {
                         p: {sv: stances_dict.get(p, {}).get(sv, '△') for sv in viewpoints_simplified}
                         for p in participants
@@ -904,7 +876,7 @@ else:
                         st.markdown("**Legend:**")
                     with col2:
                         st.markdown("""
-- ✅ Support / Mentioned
+- ✅ Support 
 - △ Neutral / Balanced
 - ❌ Oppose
                         """)
