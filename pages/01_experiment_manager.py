@@ -14,11 +14,6 @@ import os
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# 检查是否在讨论中
-if not st.session_state.get("in_discussion", False):
-    st.warning("请先从首页进入讨论")
-    st.switch_page("app.py")
-
 # 导入自定义模块
 try:
     from consensus_matrix import ConsensusMatrix
@@ -39,6 +34,18 @@ st.set_page_config(
     page_icon="💬",
     layout="wide"
 )
+
+# 初始化必要的会话状态
+if "user_name" not in st.session_state:
+    st.session_state.user_name = "User"
+if "group_name" not in st.session_state:
+    st.session_state.group_name = "Default Group"
+if "discussion_topic" not in st.session_state:
+    st.session_state.discussion_topic = "Default Topic"
+if "ai_mode" not in st.session_state:
+    st.session_state.ai_mode = "Control"
+if "session_id" not in st.session_state:
+    st.session_state.session_id = "default_session"
 
 # ==================== 全局状态 ====================
 DATA_FILE = "sessions_data.json"
@@ -145,6 +152,7 @@ with st.sidebar:
 
 # ==================== 主界面 ====================
 st.markdown(f"## 💬 {st.session_state.group_name} Discussion")
+participants = get_session_participants(st.session_state.session_id)
 st.markdown(f"**👥 Participants:** {', '.join(participants) if participants else 'Waiting for participants...'}")
 st.markdown(f"**🎯 Topic:** {st.session_state.discussion_topic}")
 
@@ -194,7 +202,7 @@ if send_btn:
         if ai_triggered and st.session_state.ai_mode != "Control":
             conversation_history = get_history(session_id, limit=20)
             
-            with st.spinner("🤖 AI 思考中..."):
+            with st.spinner("�� AI 思考中..."):
                 try:
                     ai_reply = generate_response(
                         st.session_state.ai_mode,
