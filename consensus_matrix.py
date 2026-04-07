@@ -1,6 +1,6 @@
 """
-共识矩阵 - Moonshot API 完整版本
-智能提取简洁观点 + 准确分析态度 + 实时更新
+共识矩阵 - 优化版本
+智能缓存 + 限流 + 备用方案
 """
 
 import json
@@ -10,98 +10,123 @@ import os
 from typing import Dict, List, Tuple, Optional
 from dotenv import load_dotenv
 import streamlit as st
+from datetime import datetime, timedelta
 
 load_dotenv()
 
-# 获取 API KEY - 优先从 Streamlit Secrets 读取
+# 获取 API KEY
 MOONSHOT_KEY = None
-
 try:
     if hasattr(st, 'secrets') and 'MOONSHOT_API_KEY' in st.secrets:
         MOONSHOT_KEY = st.secrets['MOONSHOT_API_KEY']
-        print(f"✅ MOONSHOT_API_KEY loaded from Streamlit Secrets")
-except Exception as e:
-    print(f"⚠️ Could not read Streamlit Secrets: {e}")
+except:
+    pass
 
 if not MOONSHOT_KEY:
     MOONSHOT_KEY = os.getenv("MOONSHOT_API_KEY")
-    if MOONSHOT_KEY:
-        print(f"✅ MOONSHOT_API_KEY loaded from environment")
-
-if MOONSHOT_KEY:
-    print(f"✅ API Key ready (length: {len(MOONSHOT_KEY)})")
-else:
-    print(f"❌ MOONSHOT_API_KEY not configured!")
 
 
 class ConsensusMatrix:
-    """共识矩阵计算器 - AI 版本"""
+    """共识矩阵计算器 - 带缓存和限流"""
     
     def __init__(self):
         self.api_key = MOONSHOT_KEY
-        self.max_retries = 2
+        self.cache = {}  # {session_id: {messages_hash: (viewpoints, stances)}}
+        self.last_api_call = None
+        self.min_interval = 5  # 最少 5 秒调用一次 API
+    
+    def _should_call_api(self) -> bool:
+        """判断是否应该调用 API"""
+        now = datetime.now()
+        if self.last_api_call is None:
+            return True
+        
+        elapsed = (now - self.last_api_call).total_seconds()
+        return elapsed >= self.min_interval
+    
+    def _messages_hash(self, messages: List[Dict]) -> str:
+        """生成消息哈希用于缓存"""
+        user_messages = [m for m in messages if m.get('user') != 'AI']
+        text = "".join([m.get('message', '') for m in user_messages])
+        return str(hash(text))
     
     def _call_moonshot(self, prompt: str, system_prompt: str = "", max_tokens: int = 1000) -> Optional[str]:
         """
-        调用 Moonshot API - 带重试机制
+        调用 Moonshot API - 带速率限制
         """
         if not self.api_key:
-            print("❌ MOONSHOT_API_KEY not configured")
+            print("❌ API Key not configured")
             return None
         
-        for attempt in range(self.max_retries):
-            try:
-                url = "https://api.moonshot.cn/v1/chat/completions"
-                
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self.api_key}"
-                }
-                
-                payload = {
-                    "model": "moonshot-v1-8k",
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": max_tokens
-                }
-                
-                print(f"[Attempt {attempt + 1}] Calling Moonshot API...")
-                response = requests.post(url, json=payload, headers=headers, timeout=30)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    if "choices" in result and len(result["choices"]) > 0:
-                        content = result["choices"][0]["message"]["content"].strip()
-                        print(f"✅ API Success: {len(content)} chars")
-                        return content
-                else:
-                    print(f"❌ API Error {response.status_code}: {response.text[:100]}")
-            
-            except Exception as e:
-                print(f"❌ API Call Error (attempt {attempt + 1}): {e}")
+        # 速率限制
+        if not self._should_call_api():
+            print("⏳ Rate limit: waiting before next API call")
+            return None
         
-        print(f"❌ All {self.max_retries} attempts failed")
+        try:
+            url = "https://api.moonshot.cn/v1/chat/completions"
+            
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}"
+            }
+            
+            payload = {
+                "model": "moonshot-v1-8k",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": max_tokens
+            }
+            
+            print(f"[📤 API Call] Calling Moonshot API...")
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            
+            self.last_api_call = datetime.now()
+            
+            if response.status_code == 200:
+                result = response.json()
+                if "choices" in result and len(result["choices"]) > 0:
+                    content = result["choices"][0]["message"]["content"].strip()
+                    print(f"[✅ API Success] {len(content)} chars")
+                    return content
+            elif response.status_code == 429:
+                print(f"❌ Rate Limited (429): API quota exceeded")
+                return None
+            else:
+                print(f"❌ API Error {response.status_code}")
+                return None
+        
+        except Exception as e:
+            print(f"❌ API Error: {e}")
+        
         return None
     
     def extract_and_simplify_viewpoints(
         self, 
         messages: List[Dict], 
         participants: List[str],
-        llm_mode: str = "Control"
+        llm_mode: str = "Control",
+        session_id: str = ""
     ) -> Optional[List[Tuple[str, str]]]:
         """
-        AI 提取观点 + 生成简洁版本
-        返回: [(完整观点, 简洁版本), ...]
+        提取观点 - 带缓存
         """
         try:
             user_messages = [m for m in messages if m.get('user') != 'AI']
             if not user_messages:
                 return None
             
-            print(f"\n📊 AI Extracting viewpoints from {len(user_messages)} messages...")
+            print(f"\n📊 Extracting viewpoints from {len(user_messages)} messages...")
+            
+            # 检查缓存
+            msg_hash = self._messages_hash(messages)
+            if session_id in self.cache and msg_hash in self.cache[session_id]:
+                print(f"[💾 Cache Hit] Using cached viewpoints")
+                viewpoints_pairs, _ = self.cache[session_id][msg_hash]
+                return viewpoints_pairs
             
             # 构建讨论文本
             discussion_text = "\n".join([
@@ -112,111 +137,93 @@ class ConsensusMatrix:
             if len(discussion_text) > 2000:
                 discussion_text = discussion_text[:2000]
             
-            # 第一步：AI 提取观点
-            prompt_extract = f"""Analyze this discussion and extract 2-4 distinct viewpoints.
+            # 尝试 API 调用
+            if self._should_call_api():
+                prompt_extract = f"""Extract 2-4 distinct viewpoints from this discussion.
 
 DISCUSSION:
 {discussion_text}
 
-Extract the core viewpoints that different participants mentioned. Each viewpoint should be unique and represent a different perspective.
+Output format - numbered list only:
+1. [Viewpoint 1]
+2. [Viewpoint 2]
+3. [Viewpoint 3]
 
-Output format - numbered list:
-1. [Complete viewpoint 1]
-2. [Complete viewpoint 2]
-3. [Complete viewpoint 3]
-
-Rules:
-- Extract REAL viewpoints from the discussion
-- Each viewpoint should be complete and clear
-- Different perspectives only
-- 1-2 sentences per viewpoint"""
-            
-            response_extract = self._call_moonshot(
-                prompt_extract,
-                "You are an expert discussion analyst. Extract viewpoints clearly and comprehensively.",
-                max_tokens=800
-            )
-            
-            if not response_extract or len(response_extract) < 20:
-                print("❌ Failed to extract viewpoints")
-                return None
-            
-            print(f"[Extracted] {response_extract[:100]}...")
-            
-            # 解析提取的观点
-            full_viewpoints = self._parse_numbered_list(response_extract)
-            
-            if not full_viewpoints:
-                print("❌ No viewpoints parsed")
-                return None
-            
-            print(f"✓ Extracted {len(full_viewpoints)} viewpoints")
-            
-            # 第二步：AI 简化观点到 8-15 字
-            viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(full_viewpoints)])
-            
-            prompt_simplify = f"""Simplify each viewpoint to 8-15 Chinese characters.
-
-VIEWPOINTS:
-{viewpoints_str}
-
-Create a simplified version for each viewpoint that captures the core idea in 8-15 characters.
-
-Output format - numbered list:
-1. 简化观点1
-2. 简化观点2
-3. 简化观点3
-
-Rules:
-- Keep the core meaning
-- Exactly 8-15 characters
-- Use simple, direct language"""
-            
-            response_simplify = self._call_moonshot(
-                prompt_simplify,
-                "Simplify viewpoints to 8-15 characters. Preserve core meaning.",
-                max_tokens=400
-            )
-            
-            simplified_viewpoints = self._parse_numbered_list(response_simplify) if response_simplify else []
-            
-            # 配对完整和简化版本
-            result = []
-            for i, full in enumerate(full_viewpoints):
-                simplified = simplified_viewpoints[i] if i < len(simplified_viewpoints) else full[:15]
+Rules: Extract REAL viewpoints, be complete and clear."""
                 
-                # 确保简化版本不超过 20 字
-                if len(simplified) > 20:
-                    simplified = simplified[:17] + "…"
+                response = self._call_moonshot(
+                    prompt_extract,
+                    "Extract viewpoints as a numbered list only.",
+                    max_tokens=600
+                )
                 
-                result.append((full, simplified))
-                print(f"  [{simplified}] → {full[:50]}...")
+                if response and len(response) > 20:
+                    full_viewpoints = self._parse_numbered_list(response)
+                    
+                    if full_viewpoints and len(full_viewpoints) >= 1:
+                        # 简化观点
+                        simplified = self._simplify_viewpoints(full_viewpoints)
+                        result = list(zip(full_viewpoints, simplified))
+                        
+                        # 缓存
+                        if session_id:
+                            if session_id not in self.cache:
+                                self.cache[session_id] = {}
+                            self.cache[session_id][msg_hash] = (result, None)
+                        
+                        print(f"✓ Extracted {len(result)} viewpoints")
+                        return result
             
-            return result if result else None
+            # 备用方案：启发式提取
+            print("📌 Using fallback heuristic extraction...")
+            viewpoints = self._heuristic_extract(user_messages)
+            if viewpoints:
+                result = [(vp, vp[:15]) for vp in viewpoints]
+                return result
+            
+            return None
         
         except Exception as e:
-            print(f"❌ Extract Error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Error: {e}")
             return None
+    
+    def _simplify_viewpoints(self, viewpoints: List[str]) -> List[str]:
+        """简化观点到 8-15 字"""
+        simplified = []
+        
+        for vp in viewpoints:
+            # 提取关键词
+            words = vp.split()
+            
+            # 简单简化：取前 2-3 个关键词
+            key_words = [w for w in words if len(w) > 2][:3]
+            simp = " ".join(key_words)
+            
+            # 截断到 15 字
+            if len(simp) > 15:
+                simp = simp[:12] + "…"
+            
+            simplified.append(simp)
+        
+        return simplified
     
     def analyze_stances(
         self,
         messages: List[Dict],
         participants: List[str],
         viewpoints_pairs: List[Tuple[str, str]],
-        llm_mode: str = "Control"
+        llm_mode: str = "Control",
+        session_id: str = ""
     ) -> Optional[Dict[str, Dict[str, str]]]:
         """
-        AI 分析每个参与者对每个观点的态度
-        返回: {参与者: {简化观点: '✅/❌/△'}}
+        分析态度 - 带缓存和备用方案
         """
         try:
-            print(f"\n📈 AI Analyzing stances for {len(participants)} participants...")
+            print(f"\n📈 Analyzing stances for {len(participants)} participants...")
             
             stances_dict = {p: {} for p in participants}
             
-            # 获取发言者及其消息
+            # 获取发言者
             speaker_messages = {}
             for m in messages:
                 user = m.get('user')
@@ -228,120 +235,111 @@ Rules:
             full_viewpoints = [vp[0] for vp in viewpoints_pairs]
             simplified_viewpoints = [vp[1] for vp in viewpoints_pairs]
             
-            # 构建完整讨论文本
-            full_discussion = "\n".join([
-                f"{m.get('user')}: {m.get('message', '')}"
-                for m in messages
-                if m.get('user') != 'AI'
-            ])
-            
-            if len(full_discussion) > 2500:
-                full_discussion = full_discussion[:2500]
-            
-            # 为所有参与者批量分析
-            viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(full_viewpoints)])
-            
-            for participant in participants:
-                print(f"  👤 {participant}...", end=" ")
-                
-                # 未发言 → 全部中立
-                if participant not in speaker_messages:
-                    print("△ (not spoken)")
-                    stances_dict[participant] = {sv: '△' for sv in simplified_viewpoints}
-                    continue
-                
-                participant_msgs = speaker_messages[participant]
-                participant_text = "\n".join(participant_msgs)
-                
-                # AI 分析该参与者的立场
-                prompt_analyze = f"""Analyze {participant}'s stance on each viewpoint based on their actual statements.
+            # 尝试 API 分析
+            if self._should_call_api():
+                for participant in participants:
+                    if participant not in speaker_messages:
+                        stances_dict[participant] = {sv: '△' for sv in simplified_viewpoints}
+                        continue
+                    
+                    participant_text = "\n".join(speaker_messages[participant])
+                    viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(full_viewpoints)])
+                    
+                    prompt = f"""Analyze {participant}'s stance on each viewpoint.
 
-VIEWPOINTS TO ANALYZE:
+VIEWPOINTS:
 {viewpoints_str}
-
-FULL DISCUSSION CONTEXT:
-{full_discussion}
 
 {participant}'s STATEMENTS:
 {participant_text}
 
-For each viewpoint, determine if {participant}:
-✅ SUPPORTS or AGREES with it (based on their statements)
-❌ OPPOSES or DISAGREES with it (based on their statements)
-△ is NEUTRAL or hasn't MENTIONED it
-
-Output ONLY a numbered list with symbols:
+Output ONLY numbered symbols:
 1. ✅
 2. ❌
-3. △
-etc.
-
-IMPORTANT: Base your analysis ONLY on {participant}'s actual statements, not on the discussion context."""
-                
-                response_analyze = self._call_moonshot(
-                    prompt_analyze,
-                    "Analyze participant stances based on their actual statements. Output ONLY numbered symbols.",
-                    max_tokens=500
-                )
-                
-                if response_analyze:
-                    print(f"Response: {response_analyze[:50]}...")
-                    stances = self._parse_stances(response_analyze, len(full_viewpoints))
+3. △"""
                     
-                    for idx, stance in enumerate(stances):
-                        if idx < len(simplified_viewpoints):
-                            stances_dict[participant][simplified_viewpoints[idx]] = stance
+                    response = self._call_moonshot(
+                        prompt,
+                        "Analyze stances. Output ONLY numbered symbols.",
+                        max_tokens=300
+                    )
                     
-                    results = [s for s in stances]
-                    print(" ".join(results))
-                else:
-                    print("△" * len(full_viewpoints))
-                    for sv in simplified_viewpoints:
-                        stances_dict[participant][sv] = '△'
+                    if response:
+                        stances = self._parse_stances(response, len(full_viewpoints))
+                        for idx, s in enumerate(stances):
+                            if idx < len(simplified_viewpoints):
+                                stances_dict[participant][simplified_viewpoints[idx]] = s
+                        print(f"  ✓ {participant}: {' '.join(stances)}")
+                    else:
+                        # 备用：启发式分析
+                        for sv in simplified_viewpoints:
+                            stances_dict[participant][sv] = '△'
+            else:
+                # 速率限制：使用启发式方案
+                print("⏳ Rate limited, using heuristic analysis...")
+                for participant in participants:
+                    if participant not in speaker_messages:
+                        stances_dict[participant] = {sv: '△' for sv in simplified_viewpoints}
+                    else:
+                        participant_text = "\n".join(speaker_messages[participant]).lower()
+                        for sv in simplified_viewpoints:
+                            stance = self._heuristic_stance(participant_text, sv)
+                            stances_dict[participant][sv] = stance
             
-            print()
             return stances_dict
         
         except Exception as e:
-            print(f"❌ Analyze Error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Error: {e}")
             return None
     
     def _parse_numbered_list(self, text: str) -> List[str]:
         """解析编号列表"""
-        if not text:
-            return []
-        
         items = []
-        lines = text.split('\n')
-        
-        for line in lines:
+        for line in text.split('\n'):
             line = line.strip()
-            if not line or len(line) < 3:
-                continue
-            
-            # 匹配 "1. " 或 "1) " 格式
             match = re.match(r'^[\d]+[\.\)]\s+(.+)$', line)
             if match:
                 item = match.group(1).strip()
                 if 3 <= len(item) <= 1000:
                     items.append(item)
-        
         return items
     
-    def _parse_stances(self, response: str, num_viewpoints: int) -> List[str]:
-        """解析态度响应"""
-        stances = ['△'] * num_viewpoints
-        
-        if not response:
-            return stances
-        
-        # 查找所有符号
-        symbols_found = re.findall(r'[✅❌△]', response)
-        
-        # 配对到对应的观点
-        for i, symbol in enumerate(symbols_found[:num_viewpoints]):
-            stances[i] = symbol
-        
+    def _parse_stances(self, response: str, num: int) -> List[str]:
+        """解析态度"""
+        stances = ['△'] * num
+        symbols = re.findall(r'[✅❌△]', response)
+        for i, s in enumerate(symbols[:num]):
+            stances[i] = s
         return stances
+    
+    def _heuristic_extract(self, messages: List[Dict]) -> List[str]:
+        """启发式提取"""
+        viewpoints = []
+        for msg in messages:
+            text = msg.get('message', '').strip()
+            if 10 < len(text) < 500:
+                viewpoints.append(text)
+        
+        seen = set()
+        unique = []
+        for vp in viewpoints:
+            if vp[:30].lower() not in seen:
+                seen.add(vp[:30].lower())
+                unique.append(vp)
+        
+        return unique[:4]
+    
+    def _heuristic_stance(self, text: str, viewpoint: str) -> str:
+        """启发式态度分析"""
+        support = ['support', 'agree', 'good', '支持', '同意', '赞成', '好']
+        oppose = ['oppose', 'disagree', 'bad', '反对', '不同意', '不赞成']
+        
+        sup_count = sum(text.count(w) for w in support)
+        opp_count = sum(text.count(w) for w in oppose)
+        
+        if sup_count > opp_count > 0:
+            return '✅'
+        elif opp_count > sup_count > 0:
+            return '❌'
+        else:
+            return '△'

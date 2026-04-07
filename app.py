@@ -782,7 +782,6 @@ else:
         messages = current_sess.get("messages", [])
         participants = get_session_participants(st.session_state.session_id)
         
-        # 显示实时状态
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Messages", len(messages))
@@ -804,41 +803,38 @@ else:
                 import pandas as pd
                 from consensus_matrix import ConsensusMatrix
                 
-                session_id = st.session_state.session_id
                 matrix_calc = ConsensusMatrix()
                 
-                # 提取观点（带备用方案）
-                viewpoints_pairs = None
+                # 提取观点（带缓存）
                 with st.spinner("🔍 Extracting viewpoints..."):
                     viewpoints_pairs = matrix_calc.extract_and_simplify_viewpoints(
                         messages,
                         participants,
-                        llm_mode=mode
+                        llm_mode=mode,
+                        session_id=st.session_state.session_id
                     )
                 
                 if viewpoints_pairs and len(viewpoints_pairs) > 0:
-                    viewpoints = [vp[0] for vp in viewpoints_pairs]
+                    simplified_vps = [vp[1] for vp in viewpoints_pairs]
                     
-                    # 分析态度（带备用方案）
-                    stances_dict = None
+                    # 分析态度（带缓存）
                     with st.spinner("📊 Analyzing stances..."):
                         stances_dict = matrix_calc.analyze_stances(
                             messages,
                             participants,
                             viewpoints_pairs,
-                            llm_mode=mode
+                            llm_mode=mode,
+                            session_id=st.session_state.session_id
                         )
                     
                     if stances_dict:
-                        # 构建矩阵
                         matrix_data = {
-                            p: {vp: stances_dict.get(p, {}).get(vp, '△') for vp in viewpoints}
+                            p: {sv: stances_dict.get(p, {}).get(sv, '△') for sv in simplified_vps}
                             for p in participants
                         }
                         
                         df = pd.DataFrame.from_dict(matrix_data, orient='index')
                         
-                        # 样式
                         def style_cells(val):
                             if val == "✅":
                                 return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
@@ -852,39 +848,29 @@ else:
                         except:
                             styled_df = df.style.map(style_cells)
                         
-                        # 显示表格
                         st.dataframe(styled_df, use_container_width=True, height=300)
                         
-                        # ===== 图例说明 =====
                         st.markdown("---")
                         st.markdown("### Legend:")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.markdown("✅ **Support**")
+                            st.caption("Agrees with viewpoint")
+                        with col2:
+                            st.markdown("❌ **Oppose**")
+                            st.caption("Disagrees")
+                        with col3:
+                            st.markdown("△ **Neutral**")
+                            st.caption("Not mentioned")
                         
-                        legend_col1, legend_col2, legend_col3 = st.columns(3)
-                        
-                        with legend_col1:
-                            st.markdown("### ✅ Support / Mentioned")
-                            st.caption("Participant explicitly supports or agrees with this viewpoint based on their statements")
-                        
-                        with legend_col2:
-                            st.markdown("### ❌ Oppose")
-                            st.caption("Participant explicitly opposes or disagrees with this viewpoint based on their statements")
-                        
-                        with legend_col3:
-                            st.markdown("### △ Neutral / Not Mentioned")
-                            st.caption("Participant hasn't mentioned this viewpoint or expressed a balanced view")
-                        
-                        # 显示完整观点
                         with st.expander("📋 View Full Viewpoints"):
-                            for i, vp in enumerate(viewpoints, 1):
-                                st.markdown(f"**{i}. {vp}**")
+                            for i, (full, simp) in enumerate(viewpoints_pairs, 1):
+                                st.markdown(f"**{i}. [{simp}]**")
+                                st.caption(full)
                     else:
-                        st.warning("⚠️ Failed to analyze stances")
-                
+                        st.warning("⚠️ Failed to analyze")
                 else:
                     st.warning("⚠️ Failed to extract viewpoints")
             
             except Exception as e:
                 st.error(f"❌ Error: {e}")
-                print(f"Matrix error: {e}")
-                import traceback
-                print(traceback.format_exc())
