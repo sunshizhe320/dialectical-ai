@@ -1,6 +1,6 @@
 """
-共识矩阵 - 独立 Moonshot API 版本
-完全独立调用，不依赖 generate_response()
+共识矩阵 - 修复版本
+正确解析观点和显示表格
 """
 
 import json
@@ -34,7 +34,7 @@ class ConsensusMatrix:
         self.api_key = MOONSHOT_KEY
     
     def _call_moonshot(self, prompt: str, system_prompt: str = "") -> Optional[str]:
-        """直接调用 Moonshot API - 不依赖 generate_response()"""
+        """直接调用 Moonshot API"""
         if not self.api_key:
             print("❌ MOONSHOT_API_KEY not found")
             return None
@@ -66,13 +66,13 @@ class ConsensusMatrix:
                 result = response.json()
                 if "choices" in result and len(result["choices"]) > 0:
                     content = result["choices"][0]["message"]["content"].strip()
-                    print(f"[✅ API Response: {len(content)} chars]")
+                    print(f"[✅ Got {len(content)} chars]")
                     return content
             else:
-                print(f"❌ API Error {response.status_code}: {response.text[:200]}")
+                print(f"❌ API Error {response.status_code}")
         
         except Exception as e:
-            print(f"❌ API Call Error: {e}")
+            print(f"❌ API Error: {e}")
         
         return None
     
@@ -101,41 +101,46 @@ class ConsensusMatrix:
             if len(discussion_text) > 2500:
                 discussion_text = discussion_text[:2500]
             
-            # 提取观点
-            prompt = f"""Analyze this discussion and extract 2-5 main viewpoints.
+            print(f"Discussion length: {len(discussion_text)} chars")
+            
+            # 提取观点 - 更精确的提示
+            prompt = f"""Extract 2-5 main viewpoints from this discussion.
 
 DISCUSSION:
 {discussion_text}
 
-Extract distinct viewpoints that people mentioned.
+Output ONLY a numbered list, one viewpoint per line:
+1. Viewpoint about topic A
+2. Viewpoint about topic B
+3. Viewpoint about topic C
 
-OUTPUT (numbered list only):
-1. [Complete first viewpoint]
-2. [Complete second viewpoint]
-3. [etc]
-
-Rules:
-- Extract REAL viewpoints from discussion
-- Be COMPLETE and CLEAR
-- Each viewpoint 1-3 sentences
-- Different perspectives only"""
+IMPORTANT: Start each line with number and period, then the viewpoint.
+No other text before or after the list.
+"""
             
             response = self._call_moonshot(
                 prompt,
-                "You are an expert discussion analyst. Extract viewpoints clearly."
+                "Extract viewpoints as a numbered list. Only output the list."
             )
             
-            if response and len(response) > 20:
-                print(f"Response preview: {response[:100]}...")
+            print(f"\n=== RAW RESPONSE ===")
+            print(response)
+            print(f"=== END RESPONSE ===\n")
+            
+            if response and len(response) > 10:
                 viewpoints = self._parse_viewpoints_smart(response)
+                print(f"Parsed viewpoints: {viewpoints}")
                 
                 if viewpoints and len(viewpoints) >= 1:
-                    print(f"✓ Extracted {len(viewpoints)} viewpoints")
+                    print(f"✓ Extracted {len(viewpoints)} viewpoints:")
+                    for i, vp in enumerate(viewpoints, 1):
+                        print(f"  {i}. {vp}")
+                    
                     result = [(vp, vp) for vp in viewpoints]
                     return result
             
             # 备用方案
-            print("📌 Using fallback heuristic extraction...")
+            print("📌 API response too short, using fallback...")
             viewpoints = self._heuristic_extract_viewpoints(user_messages)
             if viewpoints:
                 print(f"✓ Fallback extracted {len(viewpoints)} viewpoints")
@@ -158,10 +163,11 @@ Rules:
         llm_mode: str = "Control"
     ) -> Optional[Dict[str, Dict[str, str]]]:
         """
-        分析态度 - 使用 Moonshot API
+        分析态度
         """
         try:
             print(f"\n📈 Analyzing stances for {len(participants)} participants...")
+            print(f"Viewpoints to analyze: {len(viewpoints_pairs)}")
             
             stances_dict = {p: {} for p in participants}
             
@@ -198,50 +204,32 @@ Rules:
                 participant_msgs = speaker_messages[participant]
                 participant_text = "\n".join(participant_msgs)
                 
-                # 批量分析所有观点
-                viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(viewpoints)])
+                print(f"\n    Analyzing {len(viewpoints)} viewpoints...")
                 
-                prompt = f"""Analyze {participant}'s stance on each viewpoint.
+                # 对每个观点分别分析
+                for idx, viewpoint in enumerate(viewpoints):
+                    prompt = f"""Determine {participant}'s stance on this viewpoint based on their actual statements.
 
-DISCUSSION:
-{full_discussion}
-
-VIEWPOINTS:
-{viewpoints_str}
+VIEWPOINT: {viewpoint}
 
 {participant}'s STATEMENTS:
 {participant_text}
 
-For each viewpoint, determine stance:
-✅ = SUPPORTS/AGREES
-❌ = OPPOSES/DISAGREES
-△ = NEUTRAL/NOT MENTIONED
+Does {participant} SUPPORT (✅), OPPOSE (❌), or is NEUTRAL (△) about this viewpoint?
 
-OUTPUT (one symbol per line, ONLY symbols):
-✅
-❌
-△
-etc."""
-                
-                response = self._call_moonshot(
-                    prompt,
-                    "Analyze discussion stances based on actual statements."
-                )
-                
-                if response:
-                    print(f"Response: {response[:50]}...")
-                    stances = self._parse_stances_from_response(response, len(viewpoints))
+Respond with ONLY ONE symbol: ✅ or ❌ or △
+No other text."""
                     
-                    for idx, stance in enumerate(stances):
-                        if idx < len(viewpoints):
-                            stances_dict[participant][viewpoints[idx]] = stance
+                    response = self._call_moonshot(
+                        prompt,
+                        "Analyze stance. Respond with ONLY one symbol: ✅ or ❌ or △"
+                    )
                     
-                    results = [s for s in stances]
-                    print(" ".join(results))
-                else:
-                    print("△" * len(viewpoints))
-                    for vp in viewpoints:
-                        stances_dict[participant][vp] = '△'
+                    stance = self._extract_stance_symbol(response)
+                    stances_dict[participant][viewpoint] = stance
+                    print(f"    [{idx+1}/{len(viewpoints)}] {viewpoint[:30]}... → {stance}")
+                
+                print(f"  ✓ {participant}: {' '.join([stances_dict[participant][vp] for vp in viewpoints])}")
             
             print()
             return stances_dict
@@ -253,36 +241,63 @@ etc."""
             return None
     
     def _parse_viewpoints_smart(self, text: str) -> List[str]:
-        """智能解析观点"""
+        """智能解析观点 - 改进版"""
         if not text:
             return []
         
         items = []
         lines = text.split('\n')
         
-        for line in lines:
+        print(f"[DEBUG] Parsing {len(lines)} lines")
+        
+        for line_num, line in enumerate(lines):
             line = line.strip()
+            
+            # 跳过空行
             if not line or len(line) < 5:
                 continue
             
-            # 格式: "1. 观点"
+            print(f"  Line {line_num}: '{line[:60]}...'")
+            
+            # 匹配 "1. 观点" 或 "1) 观点" 格式
             match = re.match(r'^[\d]+[\.\)]\s+(.+)$', line)
             if match:
                 item = match.group(1).strip()
+                print(f"    ✓ Matched: '{item[:60]}...'")
                 if 5 <= len(item) <= 1000:
                     items.append(item)
+                continue
+            
+            # 如果以其他格式开头但看起来像观点
+            if len(line) > 20 and not line.startswith('IMPORTANT'):
+                # 可能是没有编号的观点
+                if '.' not in line[:3]:  # 不是句子的一部分
+                    print(f"    ~ Possible viewpoint (no number): '{line[:60]}...'")
         
+        print(f"[DEBUG] Final items: {len(items)}")
         return items[:5]
     
-    def _parse_stances_from_response(self, response: str, num_viewpoints: int) -> List[str]:
-        """从响应中解析态度"""
-        stances = ['△'] * num_viewpoints
-        symbols_found = re.findall(r'[✅❌△]', response)
+    def _extract_stance_symbol(self, response: str) -> str:
+        """从响应中提取态度符号"""
+        if not response:
+            return '△'
         
-        for i, symbol in enumerate(symbols_found[:num_viewpoints]):
-            stances[i] = symbol
+        # 查找第一个符号
+        if '✅' in response:
+            return '✅'
+        if '❌' in response:
+            return '❌'
+        if '△' in response:
+            return '△'
         
-        return stances
+        # 根据关键词判断
+        response_lower = response.lower()
+        if 'support' in response_lower or 'agree' in response_lower or 'yes' in response_lower:
+            return '✅'
+        if 'oppose' in response_lower or 'disagree' in response_lower or 'no' in response_lower:
+            return '❌'
+        
+        return '△'
     
     def _heuristic_extract_viewpoints(self, messages: List[Dict]) -> List[str]:
         """启发式提取观点（备用方案）"""
@@ -300,4 +315,5 @@ etc."""
                 seen.add(vp.lower())
                 unique.append(vp)
         
+        print(f"[Heuristic] Extracted {len(unique)} unique viewpoints")
         return unique[:5]
