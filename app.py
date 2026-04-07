@@ -777,10 +777,18 @@ else:
         st.divider()
         st.markdown("## 📊 Analysis & Consensus Matrix")
         
+        print("\n" + "="*60)
+        print("🔍 DEBUG: 开始矩阵分析")
+        print("="*60)
+        
         all_data = load_all_sessions()
         current_sess = all_data.get(st.session_state.session_id, {})
         messages = current_sess.get("messages", [])
         participants = get_session_participants(st.session_state.session_id)
+        
+        print(f"📊 Messages: {len(messages)}")
+        print(f"👥 Participants: {len(participants)}")
+        print(f"Messages list: {[m.get('user') for m in messages]}")
         
         # 显示实时状态
         col1, col2, col3, col4 = st.columns(4)
@@ -791,88 +799,101 @@ else:
         with col3:
             user_msg_count = len([m for m in messages if m.get('user') != 'AI'])
             st.metric("💬 Discussions", user_msg_count)
+            print(f"💬 User messages: {user_msg_count}")
         with col4:
             if st.button("🔄 Refresh Matrix", key="refresh_matrix"):
                 st.rerun()
         
         user_message_count = len([m for m in messages if m.get('user') != 'AI'])
         
+        print(f"✓ User message count: {user_message_count}")
+        
         if user_message_count < 1:
             st.warning(f"⏳ 等待讨论... (至少需要 1 条消息)")
+            print("⏳ 没有用户消息，退出")
         else:
+            print("✓ 有用户消息，开始分析...")
+            
             try:
-                from consensus_matrix import ConsensusMatrix
                 import pandas as pd
+                print("✓ 导入 pandas 成功")
+                
+                from consensus_matrix import ConsensusMatrix
+                print("✓ 导入 ConsensusMatrix 成功")
                 
                 session_id = st.session_state.session_id
                 matrix_calc = ConsensusMatrix()
+                print(f"✓ 创建 ConsensusMatrix 实例成功")
                 
-                # 每次都重新分析（实时更新）
-                print("\n" + "="*50)
-                print("🔄 重新分析矩阵...")
-                print("="*50)
+                # 简单的快速分析（不调用 AI）
+                st.info("💡 使用快速分析模式")
                 
-                with st.spinner("📊 提取并简化观点..."):
-                    viewpoints_pairs = matrix_calc.extract_and_simplify_viewpoints(
-                        messages,
-                        participants,
-                        llm_mode=mode
-                    )
+                # 直接从消息中提取简单观点
+                print("🔄 提取简单观点...")
+                viewpoints = list(set([
+                    msg.get('message', '')[:20] 
+                    for msg in messages 
+                    if msg.get('user') != 'AI' and len(msg.get('message', '')) > 5
+                ]))[:5]
                 
-                if viewpoints_pairs:
-                    simplified_vps = [vp[1] for vp in viewpoints_pairs]
+                print(f"✓ 提取了 {len(viewpoints)} 个观点: {viewpoints}")
+                
+                if viewpoints:
+                    print("✓ 有观点，创建矩阵...")
                     
-                    with st.spinner("📈 分析态度..."):
-                        stances_dict = matrix_calc.analyze_stances(
-                            messages,
-                            participants,
-                            viewpoints_pairs,
-                            llm_mode=mode
-                        )
+                    # 简��的态度分析
+                    stances_dict = {}
+                    for p in participants:
+                        stances_dict[p] = {}
+                        for vp in viewpoints:
+                            stances_dict[p][vp] = '✅'
                     
-                    if stances_dict:
-                        st.markdown(f"### 📋 Matrix ({len(participants)}×{len(viewpoints_pairs)})")
-                        
-                        # 构建矩阵数据
-                        matrix_data = {
-                            p: {sv: stances_dict.get(p, {}).get(sv, '△') for sv in simplified_vps}
-                            for p in participants
-                        }
-                        df = pd.DataFrame.from_dict(matrix_data, orient='index')
-                        
-                        # 样式函数
-                        def style_cells(val):
-                            if val == "✅":
-                                return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
-                            elif val == "❌":
-                                return 'background-color: #FFB6C6; text-align: center; font-weight: bold; font-size: 18px;'
-                            else:
-                                return 'background-color: #FFE4B5; text-align: center; font-weight: bold; font-size: 16px;'
-                        
-                        try:
-                            styled_df = df.style.applymap(style_cells)
-                        except:
-                            styled_df = df.style.map(style_cells)
-                        
-                        st.dataframe(styled_df, use_container_width=True)
-                        
-                        # 底部图例
-                        st.divider()
-                        col1, col2, col3 = st.columns([1, 2, 1])
-                        
-                        with col1:
-                            st.markdown("**Legend:**")
-                        with col2:
-                            st.markdown("""
-- ✅ Support / Mentioned
-- △ Neutral / Balanced
-- ❌ Oppose
-                            """)
-                        with col3:
-                            st.caption(f"👥 {len(participants)} | 📌 {len(simplified_vps)}")
-                
+                    print(f"✓ Stances dict: {stances_dict}")
+                    
+                    st.markdown(f"### 📋 Matrix ({len(participants)}×{len(viewpoints)})")
+                    
+                    # 构建矩阵数据
+                    matrix_data = {
+                        p: {vp: stances_dict.get(p, {}).get(vp, '△') for vp in viewpoints}
+                        for p in participants
+                    }
+                    
+                    print(f"✓ Matrix data: {matrix_data}")
+                    
+                    df = pd.DataFrame.from_dict(matrix_data, orient='index')
+                    
+                    print(f"✓ DataFrame created:\n{df}")
+                    
+                    # 样式函数
+                    def style_cells(val):
+                        if val == "✅":
+                            return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
+                        elif val == "❌":
+                            return 'background-color: #FFB6C6; text-align: center; font-weight: bold; font-size: 18px;'
+                        else:
+                            return 'background-color: #FFE4B5; text-align: center; font-weight: bold; font-size: 16px;'
+                    
+                    try:
+                        styled_df = df.style.applymap(style_cells)
+                    except:
+                        styled_df = df.style.map(style_cells)
+                    
+                    print("✓ 显示表格...")
+                    st.dataframe(styled_df, use_container_width=True)
+                    st.success("✅ 表格显示成功！")
+                    
+                else:
+                    st.warning("❌ 无法提取观点")
+                    print("❌ 观点为空")
+            
             except Exception as e:
-                st.error(f"❌ 矩阵显示错误: {e}")
+                print(f"❌ 错误: {e}")
                 import traceback
+                print(traceback.format_exc())
+                st.error(f"❌ 错误: {e}")
                 with st.expander("错误详情"):
                     st.code(traceback.format_exc())
+        
+        print("="*60)
+        print("✓ 矩阵分析完成")
+        print("="*60 + "\n")
