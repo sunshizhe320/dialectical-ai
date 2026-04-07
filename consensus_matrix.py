@@ -1,6 +1,6 @@
 """
-共识矩阵 - 完整的 AI 智能版本
-自动提取观点、简化、分析态度
+共识矩阵 - 增强的 AI 智能版本
+更好的观点提取和态度分析
 """
 
 import json
@@ -33,108 +33,103 @@ class ConsensusMatrix:
             
             # 构建讨论文本
             discussion_text = "\n".join([
-                f"[{m.get('user')}]: {m.get('message', '')}"
+                f"{m.get('user')}: {m.get('message', '')}"
                 for m in user_messages
             ])
             
-            # 控制长度
             if len(discussion_text) > 2000:
                 discussion_text = discussion_text[:2000]
             
             print(f"\n📊 Extracting viewpoints from {len(user_messages)} messages...")
+            print(f"Discussion length: {len(discussion_text)} chars")
             
-            # 提取观点
-            prompt_extract = f"""Analyze this discussion and extract the MAIN viewpoints/arguments mentioned.
+            # 第一次尝试：提取观点
+            prompt = f"""Extract 2-5 main viewpoints/arguments from this discussion.
 
 DISCUSSION:
 {discussion_text}
 
-TASK: Extract 2-5 distinct viewpoints that people mentioned.
+List each viewpoint clearly, numbered 1-5. One complete viewpoint per line.
+Example format:
+1. Remote work saves commute time
+2. Work-life balance improves with remote options
+3. Team collaboration is harder remotely
 
-OUTPUT FORMAT (numbered list, ONLY the viewpoint, nothing else):
-1. Viewpoint 1
-2. Viewpoint 2
-3. Viewpoint 3
-
-RULES:
-- Extract ACTUAL viewpoints from the discussion
-- NO invented viewpoints
-- Keep original meaning
-- Each 1-2 sentences max
-- Different perspectives/arguments only"""
+Extract REAL viewpoints only - no "I don't know" or filler."""
             
             response = generate_response(
                 llm_mode, 
-                prompt_extract, 
+                prompt, 
                 group_id="system", 
                 user="System"
             )
             
-            if not response:
-                print("❌ Failed to extract viewpoints")
+            print(f"AI Response:\n{response}\n")
+            
+            if not response or len(response) < 10:
+                print("❌ Empty response from AI")
                 return None
             
-            full_viewpoints = self._parse_numbered_list(response)
+            # 解析多种格式
+            full_viewpoints = self._parse_viewpoints_smart(response)
             
             if not full_viewpoints:
-                print("❌ No viewpoints parsed from response")
-                print(f"Response: {response}")
+                print("❌ No viewpoints parsed")
                 return None
             
-            print(f"✓ Extracted {len(full_viewpoints)} viewpoints")
+            print(f"✓ Extracted {len(full_viewpoints)} viewpoints:")
             for i, vp in enumerate(full_viewpoints, 1):
-                print(f"  {i}. {vp[:50]}...")
+                print(f"  {i}. {vp}")
             
-            # 简化观点到 8-15 字
-            if full_viewpoints:
-                viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(full_viewpoints)])
-                
-                prompt_simplify = f"""Simplify each viewpoint to 8-15 Chinese characters.
+            # 第二步：简化观点
+            viewpoints_str = "\n".join([f"{i}. {vp}" for i, vp in enumerate(full_viewpoints, 1)])
+            
+            prompt_simplify = f"""Simplify each viewpoint to 8-15 Chinese characters. Keep the core meaning.
 
 VIEWPOINTS:
 {viewpoints_str}
 
-TASK: Create a simplified version for each viewpoint (8-15 characters)
+Return ONLY a numbered list like this:
+1. 核心观点简化版
+2. 另一个观点
+etc.
 
-OUTPUT FORMAT (numbered list):
-1. 简化观点1
-2. 简化观点2
-3. 简化观点3
-
-RULES:
-- Keep the KEY meaning
-- Exactly 8-15 characters
-- Simple words
-- Can use phrases"""
-                
-                response = generate_response(
-                    llm_mode, 
-                    prompt_simplify, 
-                    group_id="system", 
-                    user="System"
-                )
-                
-                simplified_viewpoints = self._parse_numbered_list(response) if response else []
-                
-                # 创建 (完整, 简化) 对
-                result = []
-                for i, full in enumerate(full_viewpoints):
-                    simplified = simplified_viewpoints[i] if i < len(simplified_viewpoints) else full[:15]
-                    # 检查长度
-                    if len(simplified) > 20:
-                        simplified = simplified[:17] + "…"
-                    result.append((full, simplified))
-                
-                print(f"✓ Simplified viewpoints:")
-                for i, (full, simp) in enumerate(result, 1):
-                    print(f"  {i}. {simp}")
-                
-                return result
+Be concise. 8-15 characters each."""
             
-            return None
+            response = generate_response(
+                llm_mode, 
+                prompt_simplify, 
+                group_id="system", 
+                user="System"
+            )
+            
+            print(f"Simplification Response:\n{response}\n")
+            
+            simplified_viewpoints = self._parse_viewpoints_smart(response) if response else []
+            
+            # 配对完整和简化版本
+            result = []
+            for i, full in enumerate(full_viewpoints):
+                if i < len(simplified_viewpoints):
+                    simplified = simplified_viewpoints[i]
+                else:
+                    # 自动简化（如果 AI 没有提供）
+                    simplified = self._auto_simplify(full)
+                
+                # 确保不超过 20 字
+                if len(simplified) > 20:
+                    simplified = simplified[:17] + "…"
+                
+                result.append((full, simplified))
+            
+            print(f"✓ Final viewpoints:")
+            for i, (full, simp) in enumerate(result, 1):
+                print(f"  {i}. [{simp}]")
+            
+            return result if result else None
         
         except Exception as e:
-            print(f"❌ Error extracting viewpoints: {e}")
+            print(f"❌ Error in extract_and_simplify: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -162,7 +157,7 @@ RULES:
             
             # 完整讨论文本
             full_discussion = "\n".join([
-                f"[{m.get('user')}]: {m.get('message', '')}"
+                f"{m.get('user')}: {m.get('message', '')}"
                 for m in messages
                 if m.get('user') != 'AI'
             ])
@@ -195,32 +190,28 @@ RULES:
                     continue
                 
                 participant_text = "\n".join(participant_msgs)
-                viewpoints_str = "\n".join([f"{i+1}. {full_viewpoints[i]}" for i in range(len(full_viewpoints))])
+                viewpoints_str = "\n".join([f"{i}. {full_viewpoints[i]}" for i in range(len(full_viewpoints))])
                 
                 prompt = f"""Analyze {participant}'s stance on each viewpoint.
 
 DISCUSSION:
 {full_discussion}
 
-VIEWPOINTS TO ANALYZE:
+VIEWPOINTS:
 {viewpoints_str}
 
-{participant}'s STATEMENTS:
+{participant}'s MESSAGES:
 {participant_text}
 
-TASK: For each viewpoint, determine {participant}'s stance.
+For each viewpoint, does {participant} SUPPORT (✅), OPPOSE (❌), or is NEUTRAL (△)?
 
-OUTPUT FORMAT (only numbers and symbols):
-1:✅
-2:❌
-3:△
+Return as a list like:
+1. ✅
+2. ❌
+3. △
+etc.
 
-RULES:
-✅ = {participant} SUPPORTS/AGREES with this viewpoint
-❌ = {participant} OPPOSES/DISAGREES with this viewpoint
-△ = {participant} doesn't mention or NEUTRAL on this viewpoint
-
-Return ONLY the numbered list with symbols, nothing else."""
+Answer each line with ONLY the number and symbol."""
                 
                 response = generate_response(
                     llm_mode, 
@@ -229,7 +220,9 @@ Return ONLY the numbered list with symbols, nothing else."""
                     user="System"
                 )
                 
-                stances = self._parse_stances(response, len(full_viewpoints))
+                print(f"Response: {response}")
+                
+                stances = self._parse_stances_smart(response, len(full_viewpoints))
                 
                 for idx, stance in enumerate(stances):
                     if idx < len(simplified_viewpoints):
@@ -243,53 +236,101 @@ Return ONLY the numbered list with symbols, nothing else."""
             return stances_dict
         
         except Exception as e:
-            print(f"❌ Error analyzing stances: {e}")
+            print(f"❌ Error in analyze_stances: {e}")
             import traceback
             traceback.print_exc()
             return None
     
-    def _parse_numbered_list(self, text: str) -> List[str]:
-        """解析编号列表"""
+    def _parse_viewpoints_smart(self, text: str) -> List[str]:
+        """智能解析各种格式的观点列表"""
+        if not text:
+            return []
+        
         items = []
         lines = text.split('\n')
         
         for line in lines:
             line = line.strip()
-            # 匹配 "1. " 或 "1) " 格式
+            if not line or len(line) < 3:
+                continue
+            
+            # 匹配多种格式
+            # 格式1: "1. 观点"
             match = re.match(r'^[\d]+[\.\)]\s+(.+)$', line)
             if match:
                 item = match.group(1).strip()
-                # 过滤空和太长的项
-                if 2 < len(item) < 500:
+                if 3 <= len(item) <= 500:
                     items.append(item)
+                continue
+            
+            # 格式2: "- 观点"
+            match = re.match(r'^[-•*]\s+(.+)$', line)
+            if match:
+                item = match.group(1).strip()
+                if 3 <= len(item) <= 500:
+                    items.append(item)
+                continue
+            
+            # 格式3: 纯文本（如果前面没有列表，可能整行就是观点）
+            if len(line) > 10 and line[0].isalpha():
+                items.append(line)
         
-        return items
+        return items[:5]  # 最多 5 个观点
     
-    def _parse_stances(self, response: str, num_viewpoints: int) -> List[str]:
-        """解析态度响应"""
+    def _parse_stances_smart(self, response: str, num_viewpoints: int) -> List[str]:
+        """智能解析态度"""
         stances = ['△'] * num_viewpoints
         
         if not response:
             return stances
         
-        # 查找 "数字:符号" 格式
-        matches = re.finditer(r'(\d+)\s*:\s*([✅❌△])', response)
+        # 方法1: 查找 "数字. 符号" 或 "数字) 符号"
+        matches = re.finditer(r'(\d+)[\.\)]\s*([✅❌△])', response)
+        found_count = 0
         for match in matches:
             try:
                 idx = int(match.group(1)) - 1
                 stance = match.group(2)
                 if 0 <= idx < num_viewpoints:
                     stances[idx] = stance
+                    found_count += 1
             except:
                 pass
         
-        # 如果没找到足够的结果，尝试备用解析
-        if stances.count('△') == len(stances):
-            # 查找符号后跟数字
-            for i in range(1, num_viewpoints + 1):
-                if f"✅" in response and f"{i}" in response:
-                    stances[i-1] = '✅'
-                elif f"❌" in response and f"{i}" in response:
-                    stances[i-1] = '❌'
+        if found_count > 0:
+            return stances
+        
+        # 方法2: 行按行查找符号
+        lines = response.split('\n')
+        for i, line in enumerate(lines):
+            if i >= num_viewpoints:
+                break
+            
+            if '✅' in line:
+                stances[i] = '✅'
+            elif '❌' in line:
+                stances[i] = '❌'
+            elif '△' in line:
+                stances[i] = '△'
         
         return stances
+    
+    def _auto_simplify(self, text: str) -> str:
+        """自动简化文本到 8-15 字"""
+        # 提取关键词
+        words = text.split()
+        
+        # 简单的启发式方法
+        key_phrases = []
+        for word in words:
+            if len(word) > 2 and word not in ['the', 'and', 'or', 'can', 'is', 'are']:
+                key_phrases.append(word)
+        
+        # 组合成 8-15 字
+        result = ' '.join(key_phrases[:3])
+        if len(result) > 20:
+            result = result[:17] + "…"
+        elif len(result) < 5:
+            result = text[:15]
+        
+        return result
