@@ -1,19 +1,73 @@
 """
-共识矩阵 - 改进版本
-更精准的态度分析
+共识矩阵 - AI 智能分析版本
+使用 Moonshot API 精准分析用户态度
 """
 
+import json
 import re
-import math
+import requests
+import os
 from typing import Dict, List, Tuple, Optional
-from collections import Counter
+from dotenv import load_dotenv
+import streamlit as st
+
+load_dotenv()
+
+MOONSHOT_KEY = None
+try:
+    if hasattr(st, 'secrets') and 'MOONSHOT_API_KEY' in st.secrets:
+        MOONSHOT_KEY = st.secrets['MOONSHOT_API_KEY']
+except:
+    pass
+
+if not MOONSHOT_KEY:
+    MOONSHOT_KEY = os.getenv("MOONSHOT_API_KEY")
 
 
 class ConsensusMatrix:
-    """共识矩阵 - 改进的语义分析版本"""
+    """共识矩阵 - AI 智能版本"""
     
     def __init__(self):
-        pass
+        self.api_key = MOONSHOT_KEY
+    
+    def _call_moonshot(self, prompt: str, system_prompt: str = "") -> Optional[str]:
+        """调用 Moonshot API"""
+        if not self.api_key:
+            print("❌ API Key not found")
+            return None
+        
+        try:
+            url = "https://api.moonshot.cn/v1/chat/completions"
+            
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}"
+            }
+            
+            payload = {
+                "model": "moonshot-v1-8k",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 2000
+            }
+            
+            response = requests.post(url, json=payload, headers=headers, timeout=60)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if "choices" in result and len(result["choices"]) > 0:
+                    content = result["choices"][0]["message"]["content"].strip()
+                    return content
+            else:
+                print(f"❌ API Error {response.status_code}")
+        
+        except Exception as e:
+            print(f"❌ API Error: {e}")
+        
+        return None
     
     def extract_and_simplify_viewpoints(
         self, 
@@ -22,42 +76,65 @@ class ConsensusMatrix:
         llm_mode: str = "Control",
         session_id: str = ""
     ) -> Optional[List[Tuple[str, str]]]:
-        """提取观点"""
+        """AI 提取观点"""
         try:
             user_messages = [m for m in messages if m.get('user') != 'AI']
             if not user_messages:
                 return None
             
-            print(f"\n📊 Smart viewpoint extraction...")
+            print(f"\n📊 AI extracting viewpoints...")
             
-            all_texts = [m.get('message', '').strip() for m in user_messages]
-            valid_texts = [t for t in all_texts if 10 <= len(t) <= 500]
+            discussion = "\n".join([
+                f"{m.get('user')}: {m.get('message', '')}"
+                for m in user_messages
+            ])
             
-            if not valid_texts:
-                print("  ❌ No valid messages")
+            if len(discussion) > 2500:
+                discussion = discussion[:2500]
+            
+            # AI 提取观点
+            prompt = f"""Analyze this discussion and extract 2-4 core viewpoints.
+
+DISCUSSION:
+{discussion}
+
+For each viewpoint:
+1. Provide the COMPLETE viewpoint (1-2 sentences)
+2. Provide a SIMPLIFIED version (8-15 characters)
+
+Output format EXACTLY:
+Viewpoint 1: [complete viewpoint]
+Simplified: [8-15 chars]
+
+Viewpoint 2: [complete viewpoint]
+Simplified: [8-15 chars]
+
+Rules:
+- Extract REAL, DISTINCT viewpoints only
+- No duplicates
+- Be complete and clear"""
+            
+            response = self._call_moonshot(
+                prompt,
+                "You are an expert discussion analyst. Extract viewpoints accurately and completely."
+            )
+            
+            if not response or len(response) < 30:
+                print("❌ API response too short")
                 return None
             
-            print(f"  Valid messages: {len(valid_texts)}")
+            result = self._parse_viewpoints(response)
             
-            # 基于词汇相似度聚类
-            clusters = self._simple_cluster(valid_texts)
-            print(f"  Found {len(clusters)} clusters")
+            if result:
+                print(f"✓ Extracted {len(result)} viewpoints")
+                for full, simp in result:
+                    print(f"  [{simp}]")
+                return result
             
-            viewpoints = []
-            for cluster in clusters[:4]:
-                representative = max(cluster, key=len)
-                viewpoints.append(representative)
-                print(f"    {representative[:40]}...")
-            
-            result = []
-            for vp in viewpoints:
-                simplified = self._smart_simplify(vp)
-                result.append((vp, simplified))
-            
-            return result if result else None
+            return None
         
         except Exception as e:
-            print(f"  ❌ Error: {e}")
+            print(f"❌ Error: {e}")
             return None
     
     def analyze_stances(
@@ -69,13 +146,14 @@ class ConsensusMatrix:
         session_id: str = ""
     ) -> Optional[Dict[str, Dict[str, str]]]:
         """
-        分析态度 - 改进版本
+        AI 智能分析每个参与者对每个观点的态度
         """
         try:
-            print(f"\n📈 Smart stance analysis...")
+            print(f"\n📈 AI analyzing stances...")
             
             stances_dict = {p: {} for p in participants}
             
+            # 获取发言者
             speaker_messages = {}
             for m in messages:
                 user = m.get('user')
@@ -87,251 +165,118 @@ class ConsensusMatrix:
             full_viewpoints = [vp[0] for vp in viewpoints_pairs]
             simplified_viewpoints = [vp[1] for vp in viewpoints_pairs]
             
-            print(f"  Analyzing {len(full_viewpoints)} viewpoints for {len(participants)} participants")
+            # 构建完整讨论
+            discussion = "\n".join([
+                f"{m.get('user')}: {m.get('message', '')}"
+                for m in messages
+                if m.get('user') != 'AI'
+            ])
             
+            if len(discussion) > 3000:
+                discussion = discussion[:3000]
+            
+            viewpoints_text = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(full_viewpoints)])
+            
+            # 批量分析所有参与者
             for participant in participants:
-                print(f"  👤 {participant}:", end=" ")
+                print(f"  👤 {participant}...", end=" ")
                 
                 if participant not in speaker_messages:
                     print("△ (not spoken)")
                     stances_dict[participant] = {sv: '△' for sv in simplified_viewpoints}
                     continue
                 
-                participant_texts = speaker_messages[participant]
-                stances = []
+                participant_text = "\n".join(speaker_messages[participant])
                 
-                # 对每个观点分析
-                for vp_idx, full_vp in enumerate(full_viewpoints):
-                    stance = self._improved_analyze_stance(
-                        participant_texts,
-                        full_vp,
-                        participant
-                    )
-                    stances.append(stance)
-                    stances_dict[participant][full_vp] = stance
-                    print(stance, end=" ")
+                # AI 分析该参与者的立场
+                prompt = f"""Analyze {participant}'s stance on each viewpoint based on their actual statements.
+
+DISCUSSION CONTEXT:
+{discussion}
+
+VIEWPOINTS TO ANALYZE:
+{viewpoints_text}
+
+{participant}'s ACTUAL STATEMENTS:
+{participant_text}
+
+For EACH viewpoint (1, 2, 3, etc.):
+- Does {participant} SUPPORT/AGREE with it? (✅)
+- Does {participant} OPPOSE/DISAGREE with it? (❌)
+- Or is {participant} NEUTRAL or hasn't MENTIONED it? (△)
+
+IMPORTANT: Base your analysis ONLY on {participant}'s actual statements, what they actually said.
+
+Output format - ONLY the symbols in order:
+1. ✅
+2. ❌
+3. △
+etc.
+
+Output ONLY the symbols, nothing else, one per line."""
                 
-                print()
+                response = self._call_moonshot(
+                    prompt,
+                    "You are an expert at analyzing discussion participants' stances. Be accurate based on actual statements."
+                )
+                
+                if response:
+                    stances = self._parse_stances(response, len(full_viewpoints))
+                    
+                    for idx, stance in enumerate(stances):
+                        if idx < len(simplified_viewpoints):
+                            stances_dict[participant][simplified_viewpoints[idx]] = stance
+                    
+                    print(" ".join(stances))
+                else:
+                    print("⚠️ AI failed, defaulting to △")
+                    for sv in simplified_viewpoints:
+                        stances_dict[participant][sv] = '△'
             
             return stances_dict
         
         except Exception as e:
-            print(f"  ❌ Error: {e}")
+            print(f"❌ Error: {e}")
             import traceback
             traceback.print_exc()
             return None
     
-    def _tokenize(self, text: str) -> List[str]:
-        """分词"""
-        text = text.lower()
-        
-        words = []
+    def _parse_viewpoints(self, text: str) -> List[Tuple[str, str]]:
+        """解析 AI 返回的观点"""
+        result = []
+        lines = text.split('\n')
         i = 0
-        while i < len(text):
-            if text[i].isalpha() or text[i].isdigit():
-                j = i
-                while j < len(text) and (text[j].isalnum() or text[j] == '_'):
-                    j += 1
-                words.append(text[i:j])
-                i = j
-            elif ord(text[i]) > 127:
-                words.append(text[i])
-                i += 1
-            else:
-                i += 1
         
-        stopwords = {
-            'and', 'or', 'is', 'the', 'a', 'an', 'in', 'on', 'at', 'by', 'to', 'for',
-            '的', '是', '和', '或', '在', '了', '有', '个', '但', '也', '能', '可',
-            '以', '所', '因', '为', '从', '到', '就', '还', '没', '不', '很', '被'
-        }
-        
-        return [w for w in words if w not in stopwords and len(w) > 1]
-    
-    def _simple_cluster(self, texts: List[str]) -> List[List[str]]:
-        """简单聚类"""
-        clusters = []
-        used = set()
-        
-        for i, text1 in enumerate(texts):
-            if i in used:
-                continue
+        while i < len(lines):
+            line = lines[i].strip()
             
-            cluster = [text1]
-            used.add(i)
-            
-            words1 = set(self._tokenize(text1))
-            
-            for j in range(i + 1, len(texts)):
-                if j in used:
-                    continue
+            if line and re.match(r'^[Vv]iewpoint\s+\d+\s*[:：]', line):
+                full = re.sub(r'^[Vv]iewpoint\s+\d+\s*[:：]\s*', '', line).strip()
                 
-                text2 = texts[j]
-                words2 = set(self._tokenize(text2))
-                
-                if len(words1) > 0 and len(words2) > 0:
-                    intersection = len(words1 & words2)
-                    union = len(words1 | words2)
-                    similarity = intersection / union
-                    
-                    if similarity > 0.25:
-                        cluster.append(text2)
-                        used.add(j)
-            
-            clusters.append(cluster)
-        
-        return clusters
-    
-    def _smart_simplify(self, text: str) -> str:
-        """简化文本"""
-        tokens = self._tokenize(text)
-        
-        if not tokens:
-            return text[:15]
-        
-        simplified = "".join(tokens[:3])
-        
-        if len(simplified) > 15:
-            simplified = simplified[:12] + "…"
-        elif len(simplified) < 8:
-            simplified = text[:15]
-            if len(text) > 15:
-                simplified += "…"
-        
-        return simplified
-    
-    def _improved_analyze_stance(
-        self,
-        participant_texts: List[str],
-        viewpoint: str,
-        participant_name: str = ""
-    ) -> str:
-        """
-        改进的态度分析
-        步骤：
-        1. 检查参与者是否在讨论这个观点
-        2. 分析整体表态（支持/反对）
-        3. 处理否定表达
-        4. 多维度评分
-        """
-        
-        vp_tokens = set(self._tokenize(viewpoint))
-        
-        if not vp_tokens:
-            return '△'
-        
-        # 步骤 1：检查相关性
-        mention_count = 0
-        supporting_sentences = 0
-        opposing_sentences = 0
-        
-        for text in participant_texts:
-            text_lower = text.lower()
-            text_tokens = set(self._tokenize(text))
-            
-            # 检查是否提到观点相关内容
-            overlap = len(vp_tokens & text_tokens)
-            if overlap > 0:
-                mention_count += overlap
-                
-                # 分句分析
-                sentences = self._split_sentences(text)
-                
-                for sentence in sentences:
-                    sent_lower = sentence.lower()
-                    sent_tokens = set(self._tokenize(sentence))
-                    
-                    # 句子中的观点词汇覆盖
-                    sent_overlap = len(vp_tokens & sent_tokens)
-                    
-                    if sent_overlap > 0:
-                        # 判断这句话的态度
-                        stance = self._sentence_stance(sent_lower)
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if re.match(r'^[Ss]implified\s*[:：]', next_line):
+                        simp = re.sub(r'^[Ss]implified\s*[:：]\s*', '', next_line).strip()
                         
-                        if stance == 'support':
-                            supporting_sentences += 1
-                        elif stance == 'oppose':
-                            opposing_sentences += 1
+                        if 5 <= len(full) <= 500 and 5 <= len(simp) <= 30:
+                            result.append((full, simp))
+                        
+                        i += 2
+                        continue
+            
+            i += 1
         
-        print(f"\n      [Debug] mention={mention_count}, support={supporting_sentences}, oppose={opposing_sentences}")
-        
-        # 步骤 2：决策
-        if mention_count == 0:
-            # 完全没提到
-            return '△'
-        
-        # 有提到观点
-        if supporting_sentences > opposing_sentences:
-            return '✅'
-        elif opposing_sentences > supporting_sentences:
-            return '❌'
-        else:
-            # 中立或未明确表态
-            return '△'
+        return result
     
-    def _split_sentences(self, text: str) -> List[str]:
-        """
-        分句 - 支持中英文
-        """
-        # 中文句号、英文句号等
-        sentences = re.split(r'[。！？；：,.;!?]', text)
+    def _parse_stances(self, response: str, num: int) -> List[str]:
+        """解析 AI 返回的态度符号"""
+        stances = ['△'] * num
         
-        # 过滤空句子
-        sentences = [s.strip() for s in sentences if s.strip()]
+        # 找所有符号
+        symbols = re.findall(r'[✅❌△]', response)
         
-        return sentences if sentences else [text]
-    
-    def _sentence_stance(self, sentence: str) -> str:
-        """
-        ��析单个句子的态度
-        """
+        # 配对到对应的观点
+        for i, symbol in enumerate(symbols[:num]):
+            stances[i] = symbol
         
-        # 强支持表达
-        strong_support = {
-            '同意': 3, '赞成': 3, '支持': 3, '好': 2, '很好': 3, '优秀': 3,
-            '有帮助': 2, '有利': 2, '改善': 2, '进步': 2, '正确': 2, '应该': 2,
-            'agree': 3, 'support': 3, 'good': 2, 'yes': 2, 'right': 2,
-            'beneficial': 2, 'improve': 2, 'positive': 2, 'helpful': 2
-        }
-        
-        # 强反对表达
-        strong_oppose = {
-            '反对': 3, '不同意': 3, '不赞成': 3, '差': 2, '不好': 2, '问题': 2,
-            '困难': 2, '不对': 2, '错误': 3, '有害': 3, '不应该': 2,
-            'oppose': 3, 'disagree': 3, 'bad': 2, 'no': 2, 'wrong': 3,
-            'problem': 2, 'difficult': 2, 'harmful': 3, 'negative': 2
-        }
-        
-        # 否定词
-        negation = {'不', '没', '无', '没有', '不是', '不能', 'not', 'no', 'can\'t', 'don\'t', 'no'}
-        
-        support_score = 0
-        oppose_score = 0
-        has_negation = any(neg in sentence for neg in negation)
-        
-        # 计分
-        for word, weight in strong_support.items():
-            count = sentence.count(word)
-            if count > 0:
-                if has_negation:
-                    # "不是很好" 或 "没有好处" - 反对
-                    oppose_score += count * weight
-                else:
-                    support_score += count * weight
-        
-        for word, weight in strong_oppose.items():
-            count = sentence.count(word)
-            if count > 0:
-                if has_negation:
-                    # "不反对" - 支持
-                    support_score += count * weight
-                else:
-                    oppose_score += count * weight
-        
-        # 判断
-        if support_score > oppose_score:
-            return 'support'
-        elif oppose_score > support_score:
-            return 'oppose'
-        else:
-            return 'neutral'
+        return stances
