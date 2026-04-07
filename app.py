@@ -807,47 +807,60 @@ else:
                 session_id = st.session_state.session_id
                 matrix_calc = ConsensusMatrix()
                 
-                # 快速提取观点
-                viewpoints = list(set([
-                    msg.get('message', '')[:20] 
-                    for msg in messages 
-                    if msg.get('user') != 'AI' and len(msg.get('message', '')) > 5
-                ]))[:5]
+                # AI 提取观点并简化
+                viewpoints_pairs = None
+                with st.spinner("🔍 AI extracting viewpoints..."):
+                    viewpoints_pairs = matrix_calc.extract_and_simplify_viewpoints(
+                        messages,
+                        participants,
+                        llm_mode=mode
+                    )
                 
-                if viewpoints:
-                    # 简单的态度分析
-                    stances_dict = {}
-                    for p in participants:
-                        stances_dict[p] = {}
-                        for vp in viewpoints:
-                            stances_dict[p][vp] = '✅'
+                if viewpoints_pairs and len(viewpoints_pairs) > 0:
+                    simplified_vps = [vp[1] for vp in viewpoints_pairs]
                     
-                    # 构建矩阵数据
-                    matrix_data = {
-                        p: {vp: stances_dict.get(p, {}).get(vp, '△') for vp in viewpoints}
-                        for p in participants
-                    }
+                    # AI 分析态度
+                    stances_dict = None
+                    with st.spinner("📊 AI analyzing stances..."):
+                        stances_dict = matrix_calc.analyze_stances(
+                            messages,
+                            participants,
+                            viewpoints_pairs,
+                            llm_mode=mode
+                        )
                     
-                    df = pd.DataFrame.from_dict(matrix_data, orient='index')
-                    
-                    # 样式函数
-                    def style_cells(val):
-                        if val == "✅":
-                            return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
-                        elif val == "❌":
-                            return 'background-color: #FFB6C6; text-align: center; font-weight: bold; font-size: 18px;'
-                        else:
-                            return 'background-color: #FFE4B5; text-align: center; font-weight: bold; font-size: 16px;'
-                    
-                    try:
-                        styled_df = df.style.applymap(style_cells)
-                    except:
-                        styled_df = df.style.map(style_cells)
-                    
-                    st.dataframe(styled_df, use_container_width=True, height=300)
-                    
+                    if stances_dict:
+                        # 构建矩阵数据
+                        matrix_data = {
+                            p: {sv: stances_dict.get(p, {}).get(sv, '△') for sv in simplified_vps}
+                            for p in participants
+                        }
+                        
+                        df = pd.DataFrame.from_dict(matrix_data, orient='index')
+                        
+                        # 样式函数
+                        def style_cells(val):
+                            if val == "✅":
+                                return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
+                            elif val == "❌":
+                                return 'background-color: #FFB6C6; text-align: center; font-weight: bold; font-size: 18px;'
+                            else:
+                                return 'background-color: #FFE4B5; text-align: center; font-weight: bold; font-size: 16px;'
+                        
+                        try:
+                            styled_df = df.style.applymap(style_cells)
+                        except:
+                            styled_df = df.style.map(style_cells)
+                        
+                        st.dataframe(styled_df, use_container_width=True, height=300)
+                    else:
+                        st.warning("⚠️ Failed to analyze stances")
+                
                 else:
-                    st.info("No viewpoints yet")
+                    st.warning("⚠️ Failed to extract viewpoints")
             
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"❌ Error: {e}")
+                print(f"Matrix error: {e}")
+                import traceback
+                print(traceback.format_exc())

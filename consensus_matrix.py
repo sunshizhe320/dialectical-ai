@@ -1,6 +1,6 @@
 """
-共识矩阵 - 完整版本
-实时提取观点和分析态度
+共识矩阵 - 完整的 AI 智能版本
+自动提取观点、简化、分析态度
 """
 
 import json
@@ -37,27 +37,31 @@ class ConsensusMatrix:
                 for m in user_messages
             ])
             
-            if len(discussion_text) > 3000:
-                discussion_text = discussion_text[:3000]
+            # 控制长度
+            if len(discussion_text) > 2000:
+                discussion_text = discussion_text[:2000]
             
-            print(f"📊 提取观点 ({len(user_messages)} 条消息)")
+            print(f"\n📊 Extracting viewpoints from {len(user_messages)} messages...")
             
-            # 第一步：提取完整观点
-            prompt_extract = f"""Extract 1-5 KEY viewpoints from this discussion.
+            # 提取观点
+            prompt_extract = f"""Analyze this discussion and extract the MAIN viewpoints/arguments mentioned.
 
-Discussion:
+DISCUSSION:
 {discussion_text}
 
-Output format (numbered list):
-1. Complete viewpoint 1
-2. Complete viewpoint 2
-...
+TASK: Extract 2-5 distinct viewpoints that people mentioned.
 
-Rules:
-- Extract ONLY actual viewpoints mentioned by participants
+OUTPUT FORMAT (numbered list, ONLY the viewpoint, nothing else):
+1. Viewpoint 1
+2. Viewpoint 2
+3. Viewpoint 3
+
+RULES:
+- Extract ACTUAL viewpoints from the discussion
 - NO invented viewpoints
-- Keep the original meaning
-- Each viewpoint 1-2 sentences"""
+- Keep original meaning
+- Each 1-2 sentences max
+- Different perspectives/arguments only"""
             
             response = generate_response(
                 llm_mode, 
@@ -67,36 +71,41 @@ Rules:
             )
             
             if not response:
-                print("❌ 无法提取观点")
+                print("❌ Failed to extract viewpoints")
                 return None
             
             full_viewpoints = self._parse_numbered_list(response)
-            print(f"✓ 提取了 {len(full_viewpoints)} 个观点")
             
-            # 第二步：生成简化版本
+            if not full_viewpoints:
+                print("❌ No viewpoints parsed from response")
+                print(f"Response: {response}")
+                return None
+            
+            print(f"✓ Extracted {len(full_viewpoints)} viewpoints")
+            for i, vp in enumerate(full_viewpoints, 1):
+                print(f"  {i}. {vp[:50]}...")
+            
+            # 简化观点到 8-15 字
             if full_viewpoints:
                 viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(full_viewpoints)])
                 
                 prompt_simplify = f"""Simplify each viewpoint to 8-15 Chinese characters.
 
-Original viewpoints:
+VIEWPOINTS:
 {viewpoints_str}
 
-Output format (numbered list):
-1. 简化版本1
-2. 简化版本2
-...
+TASK: Create a simplified version for each viewpoint (8-15 characters)
 
-Rules:
+OUTPUT FORMAT (numbered list):
+1. 简化观点1
+2. 简化观点2
+3. 简化观点3
+
+RULES:
 - Keep the KEY meaning
-- 8-15 characters ONLY
-- Use simple words
-- No complex sentences
-
-Examples:
-"Remote work saves commute time" → "节省通勤时间"
-"远程办公可以节省上班时间" → "节省通勤"
-"""
+- Exactly 8-15 characters
+- Simple words
+- Can use phrases"""
                 
                 response = generate_response(
                     llm_mode, 
@@ -111,18 +120,21 @@ Examples:
                 result = []
                 for i, full in enumerate(full_viewpoints):
                     simplified = simplified_viewpoints[i] if i < len(simplified_viewpoints) else full[:15]
-                    # 确保不超过 20 字
+                    # 检查长度
                     if len(simplified) > 20:
-                        simplified = simplified[:17] + ".."
+                        simplified = simplified[:17] + "…"
                     result.append((full, simplified))
                 
-                print(f"✓ 简化完成\n")
+                print(f"✓ Simplified viewpoints:")
+                for i, (full, simp) in enumerate(result, 1):
+                    print(f"  {i}. {simp}")
+                
                 return result
             
             return None
         
         except Exception as e:
-            print(f"❌ 提取观点错误: {e}")
+            print(f"❌ Error extracting viewpoints: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -141,7 +153,7 @@ Examples:
         try:
             from ai_agent import generate_response
             
-            print(f"📊 分析态度 ({len(participants)} 人 × {len(viewpoints_pairs)} 观点)")
+            print(f"\n📈 Analyzing stances for {len(participants)} participants...")
             
             stances_dict = {p: {} for p in participants}
             
@@ -152,20 +164,21 @@ Examples:
             full_discussion = "\n".join([
                 f"[{m.get('user')}]: {m.get('message', '')}"
                 for m in messages
+                if m.get('user') != 'AI'
             ])
             
-            if len(full_discussion) > 4000:
-                full_discussion = full_discussion[:4000]
+            if len(full_discussion) > 3000:
+                full_discussion = full_discussion[:3000]
             
             full_viewpoints = [vp[0] for vp in viewpoints_pairs]
             simplified_viewpoints = [vp[1] for vp in viewpoints_pairs]
             
             for participant in participants:
-                print(f"👤 {participant}")
+                print(f"  👤 {participant}...", end=" ")
                 
                 # 未发言 → 全部中立
                 if participant not in speakers:
-                    print(f"   (未发言) 标记为中立")
+                    print("(not spoken) → all neutral")
                     stances_dict[participant] = {sv: '△' for sv in simplified_viewpoints}
                     continue
                 
@@ -176,30 +189,38 @@ Examples:
                     if m.get('user') == participant and m.get('message', '')
                 ]
                 
+                if not participant_msgs:
+                    print("(no messages) → all neutral")
+                    stances_dict[participant] = {sv: '△' for sv in simplified_viewpoints}
+                    continue
+                
                 participant_text = "\n".join(participant_msgs)
                 viewpoints_str = "\n".join([f"{i+1}. {full_viewpoints[i]}" for i in range(len(full_viewpoints))])
                 
-                prompt = f"""Analyze {participant}'s stance on EACH viewpoint.
+                prompt = f"""Analyze {participant}'s stance on each viewpoint.
 
 DISCUSSION:
 {full_discussion}
 
-VIEWPOINTS:
+VIEWPOINTS TO ANALYZE:
 {viewpoints_str}
 
 {participant}'s STATEMENTS:
 {participant_text}
 
-For each viewpoint (1-{len(full_viewpoints)}), output:
+TASK: For each viewpoint, determine {participant}'s stance.
+
+OUTPUT FORMAT (only numbers and symbols):
 1:✅
 2:❌
 3:△
-...
 
-Rules:
-✅ = {participant} explicitly supports
-❌ = {participant} explicitly opposes  
-△ = {participant} doesn't mention or unclear"""
+RULES:
+✅ = {participant} SUPPORTS/AGREES with this viewpoint
+❌ = {participant} OPPOSES/DISAGREES with this viewpoint
+△ = {participant} doesn't mention or NEUTRAL on this viewpoint
+
+Return ONLY the numbered list with symbols, nothing else."""
                 
                 response = generate_response(
                     llm_mode, 
@@ -213,14 +234,16 @@ Rules:
                 for idx, stance in enumerate(stances):
                     if idx < len(simplified_viewpoints):
                         stances_dict[participant][simplified_viewpoints[idx]] = stance
-                        emoji = "✅" if stance == "✅" else ("❌" if stance == "❌" else "△")
-                        print(f"   {idx+1}. {emoji}")
+                
+                # 显示结果
+                results = [f"{i+1}:{s}" for i, s in enumerate(stances)]
+                print(" | ".join(results))
             
             print()
             return stances_dict
         
         except Exception as e:
-            print(f"❌ 分析态度错误: {e}")
+            print(f"❌ Error analyzing stances: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -228,13 +251,18 @@ Rules:
     def _parse_numbered_list(self, text: str) -> List[str]:
         """解析编号列表"""
         items = []
-        for line in text.split('\n'):
+        lines = text.split('\n')
+        
+        for line in lines:
             line = line.strip()
+            # 匹配 "1. " 或 "1) " 格式
             match = re.match(r'^[\d]+[\.\)]\s+(.+)$', line)
             if match:
                 item = match.group(1).strip()
-                if len(item) > 2 and len(item) < 500:
+                # 过滤空和太长的项
+                if 2 < len(item) < 500:
                     items.append(item)
+        
         return items
     
     def _parse_stances(self, response: str, num_viewpoints: int) -> List[str]:
@@ -254,5 +282,14 @@ Rules:
                     stances[idx] = stance
             except:
                 pass
+        
+        # 如果没找到足够的结果，尝试备用解析
+        if stances.count('△') == len(stances):
+            # 查找符号后跟数字
+            for i in range(1, num_viewpoints + 1):
+                if f"✅" in response and f"{i}" in response:
+                    stances[i-1] = '✅'
+                elif f"❌" in response and f"{i}" in response:
+                    stances[i-1] = '❌'
         
         return stances
