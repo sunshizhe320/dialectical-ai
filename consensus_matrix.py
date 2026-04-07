@@ -1,6 +1,6 @@
 """
-共识矩阵 - 精确版本
-基于实际发言内容分析态度
+共识矩阵 - 可靠版本
+包含备用方案和多种格式支持
 """
 
 import json
@@ -21,8 +21,7 @@ class ConsensusMatrix:
         llm_mode: str = "Control"
     ) -> Optional[List[Tuple[str, str]]]:
         """
-        提取观点 - 保留完整表达
-        返回: [(完整观点, 完整观点), ...]
+        提取观点 - 带备用方案
         """
         try:
             from ai_agent import generate_response
@@ -37,62 +36,58 @@ class ConsensusMatrix:
                 for m in user_messages
             ])
             
-            if len(discussion_text) > 2500:
-                discussion_text = discussion_text[:2500]
+            if len(discussion_text) > 2000:
+                discussion_text = discussion_text[:2000]
             
             print(f"\n📊 Extracting viewpoints from {len(user_messages)} messages...")
             
-            # 提取观点
-            prompt = f"""Extract 2-5 distinct viewpoints/arguments mentioned in this discussion.
+            # 尝试 AI 提取
+            try:
+                prompt = f"""Extract the main viewpoints/arguments in this discussion.
 
 DISCUSSION:
 {discussion_text}
 
-TASK: Identify the main viewpoints or arguments. Express each viewpoint COMPLETELY and CLEARLY.
+Extract 2-5 viewpoints. Format:
+1. Viewpoint 1
+2. Viewpoint 2
+etc.
 
-OUTPUT FORMAT:
-1. [Complete viewpoint with full context]
-2. [Another complete viewpoint]
-3. [etc]
-
-RULES:
-- Extract REAL viewpoints only
-- Express each viewpoint FULLY and CLEARLY (not abbreviated)
-- Different perspectives/arguments only
-- Keep original meaning
-- Each viewpoint can be 1-3 sentences"""
+Be clear and complete."""
+                
+                response = generate_response(
+                    llm_mode, 
+                    prompt, 
+                    group_id="system", 
+                    user="System",
+                    timeout=10
+                )
+                
+                print(f"AI Response:\n{response[:200]}...")
+                
+                if response and len(response) > 20:
+                    viewpoints = self._parse_viewpoints_smart(response)
+                    if viewpoints and len(viewpoints) >= 2:
+                        print(f"✓ AI extracted {len(viewpoints)} viewpoints")
+                        result = [(vp, vp) for vp in viewpoints]
+                        return result
+                
+            except Exception as e:
+                print(f"⚠️ AI extraction failed: {e}")
             
-            response = generate_response(
-                llm_mode, 
-                prompt, 
-                group_id="system", 
-                user="System"
-            )
+            # 备用方案：启发式提取
+            print("📌 Using fallback heuristic extraction...")
+            viewpoints = self._heuristic_extract_viewpoints(user_messages)
             
-            print(f"AI Response:\n{response}\n")
+            if viewpoints and len(viewpoints) >= 1:
+                print(f"✓ Fallback extracted {len(viewpoints)} viewpoints")
+                result = [(vp, vp) for vp in viewpoints]
+                return result
             
-            if not response or len(response) < 10:
-                print("❌ Empty response from AI")
-                return None
-            
-            # 解析观点
-            full_viewpoints = self._parse_viewpoints_smart(response)
-            
-            if not full_viewpoints:
-                print("❌ No viewpoints parsed")
-                return None
-            
-            print(f"✓ Extracted {len(full_viewpoints)} viewpoints:")
-            for i, vp in enumerate(full_viewpoints, 1):
-                print(f"  {i}. {vp[:60]}...")
-            
-            # 返回 (完整, 完整) 对
-            result = [(vp, vp) for vp in full_viewpoints]
-            
-            return result if result else None
+            return None
         
         except Exception as e:
-            print(f"❌ Error in extract_and_simplify: {e}")
+            print(f"❌ Error: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -105,8 +100,7 @@ RULES:
         llm_mode: str = "Control"
     ) -> Optional[Dict[str, Dict[str, str]]]:
         """
-        精确分析态度 - 基于每个参与者的实际发言
-        返回: {参与者: {观点: '✅/❌/△'}}
+        分析态度 - 带备用方案
         """
         try:
             from ai_agent import generate_response
@@ -131,7 +125,7 @@ RULES:
                 
                 # 未发言 → 全部中立
                 if participant not in speaker_messages:
-                    print("(not spoken) → all △")
+                    print("△ (not spoken)")
                     stances_dict[participant] = {vp: '△' for vp in viewpoints}
                     continue
                 
@@ -140,38 +134,36 @@ RULES:
                 
                 # 对每个观点分别分析
                 for idx, viewpoint in enumerate(viewpoints):
-                    # 更精确的提示词
-                    prompt = f"""Based on {participant}'s actual statements, determine their stance on this viewpoint.
+                    try:
+                        prompt = f"""Analyze {participant}'s stance on this viewpoint.
 
-VIEWPOINT TO ANALYZE:
-"{viewpoint}"
+VIEWPOINT: "{viewpoint}"
 
-{participant}'s ACTUAL STATEMENTS:
-{participant_text}
+{participant}'s STATEMENTS: {participant_text}
 
-IMPORTANT: Look at the EXACT WORDS and STATEMENTS {participant} made.
-
-Does {participant}'s statements indicate:
-1. ✅ SUPPORT or AGREE with this viewpoint? (They explicitly support it, give examples supporting it, or argue in favor of it)
-2. ❌ OPPOSE or DISAGREE with this viewpoint? (They explicitly oppose it, give counterarguments, or argue against it)
-3. △ NEUTRAL or NOT MENTIONED? (They don't mention this viewpoint, or are ambiguous/balanced)
-
-Respond with ONLY the symbol and a brief reason:
-✅ [brief reason]
-or
-❌ [brief reason]
-or
-△ [brief reason]"""
+Does {participant} SUPPORT (✅), OPPOSE (❌), or is NEUTRAL (△)?
+Answer with ONLY: ✅ or ❌ or △"""
+                        
+                        response = generate_response(
+                            llm_mode, 
+                            prompt, 
+                            group_id="system", 
+                            user="System",
+                            timeout=5
+                        )
+                        
+                        stance = self._extract_stance_from_response(
+                            response, 
+                            participant_text, 
+                            viewpoint
+                        )
+                    except:
+                        # 备用：启发式判断
+                        stance = self._heuristic_analyze_stance(
+                            participant_text, 
+                            viewpoint
+                        )
                     
-                    response = generate_response(
-                        llm_mode, 
-                        prompt, 
-                        group_id="system", 
-                        user="System"
-                    )
-                    
-                    # 精确解析
-                    stance = self._extract_stance_from_response(response, participant_text, viewpoint)
                     stances_dict[participant][viewpoint] = stance
                     print(stance, end="")
                 
@@ -181,13 +173,13 @@ or
             return stances_dict
         
         except Exception as e:
-            print(f"❌ Error in analyze_stances: {e}")
+            print(f"❌ Error: {e}")
             import traceback
             traceback.print_exc()
             return None
     
     def _parse_viewpoints_smart(self, text: str) -> List[str]:
-        """智能解析观点列表"""
+        """智能解析观点"""
         if not text:
             return []
         
@@ -199,7 +191,7 @@ or
             if not line or len(line) < 5:
                 continue
             
-            # 匹配 "1. 观点" 格式
+            # 格式1: "1. 观点"
             match = re.match(r'^[\d]+[\.\)]\s+(.+)$', line)
             if match:
                 item = match.group(1).strip()
@@ -207,7 +199,7 @@ or
                     items.append(item)
                 continue
             
-            # 匹配 "- 观点" 格式
+            # 格式2: "- 观点"
             match = re.match(r'^[-•*]\s+(.+)$', line)
             if match:
                 item = match.group(1).strip()
@@ -217,45 +209,76 @@ or
         
         return items[:5]
     
-    def _extract_stance_from_response(self, response: str, participant_text: str, viewpoint: str) -> str:
-        """从 AI 响应中精确提取态度"""
+    def _heuristic_extract_viewpoints(self, messages: List[Dict]) -> List[str]:
+        """启发式提取观点（备用方案）"""
+        viewpoints = []
+        
+        # 直接使用消息作为观点
+        for msg in messages:
+            text = msg.get('message', '').strip()
+            if len(text) > 20 and len(text) < 500:
+                viewpoints.append(text)
+        
+        # 去重并限制
+        viewpoints = list(dict.fromkeys(viewpoints))[:5]
+        
+        return viewpoints
+    
+    def _extract_stance_from_response(
+        self, 
+        response: str, 
+        participant_text: str, 
+        viewpoint: str
+    ) -> str:
+        """精确提取态度"""
         if not response:
             return '△'
         
-        # 第一优先级：查找符号在响应开头
-        if response.startswith('✅'):
+        # 优先查找符号
+        if response.startswith('✅') or response.startswith('Support'):
             return '✅'
-        elif response.startswith('❌'):
+        elif response.startswith('❌') or response.startswith('Oppose'):
             return '❌'
-        elif response.startswith('△'):
+        elif response.startswith('△') or response.startswith('Neutral'):
             return '△'
         
-        # 第二优先级：查找 "✅/❌/△" 符号
-        if '✅' in response:
-            # 检查是否在前半部分
-            if response.index('✅') < len(response) / 2:
-                return '✅'
-        
-        if '❌' in response:
-            if response.index('❌') < len(response) / 2:
-                return '❌'
-        
-        if '△' in response:
-            if response.index('△') < len(response) / 2:
-                return '△'
-        
-        # 第三优先级：查找关键词（中英文）
-        support_keywords = ['support', 'agree', 'favor', 'positive', 'good', '支持', '赞同', '同意', '赞成', '好的', '同意这', '很好', '应该', '肯定']
-        oppose_keywords = ['oppose', 'disagree', 'against', 'negative', 'bad', '反对', '不同意', '否定', '反对这', '不好', '不应该', '不赞成', '错误']
-        
-        response_lower = response.lower()
-        
-        support_count = sum(1 for kw in support_keywords if kw in response_lower or kw in participant_text.lower())
-        oppose_count = sum(1 for kw in oppose_keywords if kw in response_lower or kw in participant_text.lower())
-        
-        if support_count > oppose_count and support_count > 0:
+        # 查找符号在响应中
+        if '✅' in response and response.index('✅') < len(response) / 2:
             return '✅'
-        elif oppose_count > support_count and oppose_count > 0:
+        if '❌' in response and response.index('❌') < len(response) / 2:
+            return '❌'
+        if '△' in response:
+            return '△'
+        
+        # 关键词匹配
+        response_lower = response.lower() + participant_text.lower()
+        
+        support_words = ['support', 'agree', 'yes', 'good', 'favor', '支持', '同意', '赞成', '好', '是的']
+        oppose_words = ['oppose', 'disagree', 'no', 'bad', 'against', '反对', '不同意', '不赞成', '不', '错']
+        
+        support_count = sum(response_lower.count(w) for w in support_words)
+        oppose_count = sum(response_lower.count(w) for w in oppose_words)
+        
+        if support_count > oppose_count > 0:
+            return '✅'
+        elif oppose_count > support_count > 0:
+            return '❌'
+        else:
+            return '△'
+    
+    def _heuristic_analyze_stance(self, participant_text: str, viewpoint: str) -> str:
+        """启发式分析态度（备用方案）"""
+        text = (participant_text + " " + viewpoint).lower()
+        
+        support_words = ['support', 'agree', 'yes', 'good', '支持', '同意', '赞成', '好']
+        oppose_words = ['oppose', 'disagree', 'no', 'bad', '反对', '不同意', '不赞成']
+        
+        support_count = sum(text.count(w) for w in support_words)
+        oppose_count = sum(text.count(w) for w in oppose_words)
+        
+        if support_count > oppose_count > 0:
+            return '✅'
+        elif oppose_count > support_count > 0:
             return '❌'
         else:
             return '△'

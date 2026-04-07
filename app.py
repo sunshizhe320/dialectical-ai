@@ -807,9 +807,9 @@ else:
                 session_id = st.session_state.session_id
                 matrix_calc = ConsensusMatrix()
                 
-                # AI 提取观点
+                # 提取观点（带备用方案）
                 viewpoints_pairs = None
-                with st.spinner("🔍 AI extracting viewpoints..."):
+                with st.spinner("🔍 Extracting viewpoints..."):
                     viewpoints_pairs = matrix_calc.extract_and_simplify_viewpoints(
                         messages,
                         participants,
@@ -819,9 +819,9 @@ else:
                 if viewpoints_pairs and len(viewpoints_pairs) > 0:
                     viewpoints = [vp[0] for vp in viewpoints_pairs]
                     
-                    # AI 分析态度
+                    # 分析态度（带备用方案）
                     stances_dict = None
-                    with st.spinner("📊 AI analyzing stances..."):
+                    with st.spinner("📊 Analyzing stances..."):
                         stances_dict = matrix_calc.analyze_stances(
                             messages,
                             participants,
@@ -830,7 +830,7 @@ else:
                         )
                     
                     if stances_dict:
-                        # 构建矩阵数据
+                        # 构建矩阵
                         matrix_data = {
                             p: {vp: stances_dict.get(p, {}).get(vp, '△') for vp in viewpoints}
                             for p in participants
@@ -838,7 +838,7 @@ else:
                         
                         df = pd.DataFrame.from_dict(matrix_data, orient='index')
                         
-                        # 样式函数
+                        # 样式
                         def style_cells(val):
                             if val == "✅":
                                 return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
@@ -855,26 +855,28 @@ else:
                         # 显示表格
                         st.dataframe(styled_df, use_container_width=True, height=300)
                         
-                        # 显示图例和说明
+                        # ===== 图例说明 =====
                         st.markdown("---")
                         st.markdown("### Legend:")
                         
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.markdown("✅ **Support / Mentioned**")
-                            st.caption("Participant explicitly supports or agrees with this viewpoint")
-                        with col2:
-                            st.markdown("❌ **Oppose**")
-                            st.caption("Participant explicitly opposes or disagrees with this viewpoint")
-                        with col3:
-                            st.markdown("△ **Neutral / Not Mentioned**")
-                            st.caption("Participant doesn't mention this viewpoint or is balanced")
+                        legend_col1, legend_col2, legend_col3 = st.columns(3)
                         
-                        # 显示完整观点在下方
+                        with legend_col1:
+                            st.markdown("### ✅ Support / Mentioned")
+                            st.caption("Participant explicitly supports or agrees with this viewpoint based on their statements")
+                        
+                        with legend_col2:
+                            st.markdown("### ❌ Oppose")
+                            st.caption("Participant explicitly opposes or disagrees with this viewpoint based on their statements")
+                        
+                        with legend_col3:
+                            st.markdown("### △ Neutral / Not Mentioned")
+                            st.caption("Participant hasn't mentioned this viewpoint or expressed a balanced view")
+                        
+                        # 显示完整观点
                         with st.expander("📋 View Full Viewpoints"):
                             for i, vp in enumerate(viewpoints, 1):
                                 st.markdown(f"**{i}. {vp}**")
-                    
                     else:
                         st.warning("⚠️ Failed to analyze stances")
                 
