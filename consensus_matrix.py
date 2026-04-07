@@ -1,6 +1,6 @@
 """
-共识矩阵 - AI 智能分析版本
-使用 Moonshot API 精准分析用户态度
+共识矩阵 - AI 智能版本
+根据实际讨论内容动态提取观点数量
 """
 
 import json
@@ -51,7 +51,7 @@ class ConsensusMatrix:
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.3,
-                "max_tokens": 2000
+                "max_tokens": 3000
             }
             
             response = requests.post(url, json=payload, headers=headers, timeout=60)
@@ -76,29 +76,34 @@ class ConsensusMatrix:
         llm_mode: str = "Control",
         session_id: str = ""
     ) -> Optional[List[Tuple[str, str]]]:
-        """AI 提取观点"""
+        """
+        AI 提取观点 - 根据实际讨论内容动态决定数量
+        """
         try:
             user_messages = [m for m in messages if m.get('user') != 'AI']
             if not user_messages:
                 return None
             
-            print(f"\n📊 AI extracting viewpoints...")
+            print(f"\n📊 AI extracting viewpoints from {len(user_messages)} messages...")
             
             discussion = "\n".join([
                 f"{m.get('user')}: {m.get('message', '')}"
                 for m in user_messages
             ])
             
-            if len(discussion) > 2500:
-                discussion = discussion[:2500]
+            if len(discussion) > 3000:
+                discussion = discussion[:3000]
             
-            # AI 提取观点
-            prompt = f"""Analyze this discussion and extract 2-4 core viewpoints.
+            # AI 动态提取观点 - 不限制数量
+            prompt = f"""Analyze this discussion and extract ALL distinct viewpoints/arguments mentioned.
 
 DISCUSSION:
 {discussion}
 
-For each viewpoint:
+Extract every unique viewpoint, perspective, or argument that participants mentioned.
+Do NOT limit to any specific number - extract as many as exist in the discussion.
+
+For EACH viewpoint:
 1. Provide the COMPLETE viewpoint (1-2 sentences)
 2. Provide a SIMPLIFIED version (8-15 characters)
 
@@ -109,14 +114,19 @@ Simplified: [8-15 chars]
 Viewpoint 2: [complete viewpoint]
 Simplified: [8-15 chars]
 
+Viewpoint 3: ...
+(continue for ALL viewpoints found)
+
 Rules:
-- Extract REAL, DISTINCT viewpoints only
+- Extract EVERY distinct viewpoint, not just the main ones
+- Be thorough and comprehensive
 - No duplicates
-- Be complete and clear"""
+- Different perspectives only
+- Maintain the original meaning"""
             
             response = self._call_moonshot(
                 prompt,
-                "You are an expert discussion analyst. Extract viewpoints accurately and completely."
+                "You are an expert at comprehensive discussion analysis. Extract ALL viewpoints exhaustively."
             )
             
             if not response or len(response) < 30:
@@ -126,15 +136,17 @@ Rules:
             result = self._parse_viewpoints(response)
             
             if result:
-                print(f"✓ Extracted {len(result)} viewpoints")
-                for full, simp in result:
-                    print(f"  [{simp}]")
+                print(f"✓ Extracted {len(result)} viewpoints:")
+                for i, (full, simp) in enumerate(result, 1):
+                    print(f"  {i}. [{simp}]")
                 return result
             
             return None
         
         except Exception as e:
             print(f"❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def analyze_stances(
@@ -149,7 +161,7 @@ Rules:
         AI 智能分析每个参与者对每个观点的态度
         """
         try:
-            print(f"\n📈 AI analyzing stances...")
+            print(f"\n📈 AI analyzing stances for {len(participants)} participants and {len(viewpoints_pairs)} viewpoints...")
             
             stances_dict = {p: {} for p in participants}
             
@@ -172,8 +184,8 @@ Rules:
                 if m.get('user') != 'AI'
             ])
             
-            if len(discussion) > 3000:
-                discussion = discussion[:3000]
+            if len(discussion) > 4000:
+                discussion = discussion[:4000]
             
             viewpoints_text = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(full_viewpoints)])
             
@@ -189,35 +201,45 @@ Rules:
                 participant_text = "\n".join(speaker_messages[participant])
                 
                 # AI 分析该参与者的立场
-                prompt = f"""Analyze {participant}'s stance on each viewpoint based on their actual statements.
+                prompt = f"""You are an expert at understanding people's viewpoints and stances in discussions.
 
-DISCUSSION CONTEXT:
+Analyze {participant}'s stance on EACH viewpoint based ONLY on what they actually said.
+
+FULL DISCUSSION:
 {discussion}
 
-VIEWPOINTS TO ANALYZE:
+VIEWPOINTS TO ANALYZE (numbered 1 to {len(full_viewpoints)}):
 {viewpoints_text}
 
 {participant}'s ACTUAL STATEMENTS:
 {participant_text}
 
-For EACH viewpoint (1, 2, 3, etc.):
-- Does {participant} SUPPORT/AGREE with it? (✅)
-- Does {participant} OPPOSE/DISAGREE with it? (❌)
-- Or is {participant} NEUTRAL or hasn't MENTIONED it? (△)
+---
 
-IMPORTANT: Base your analysis ONLY on {participant}'s actual statements, what they actually said.
+For EACH viewpoint number (1, 2, 3, 4... up to {len(full_viewpoints)}):
+Determine if {participant}:
+- ✅ SUPPORTS / AGREES / ENDORSES / ADVOCATES for this viewpoint
+- ❌ OPPOSES / DISAGREES / CRITICIZES / ARGUES AGAINST this viewpoint
+- △ NEUTRAL / BALANCED / NOT MENTIONED (either hasn't mentioned it, or gives both pros and cons)
 
-Output format - ONLY the symbols in order:
+INSTRUCTIONS:
+1. Go through each numbered viewpoint
+2. Check if {participant} mentioned or addressed it
+3. If YES → decide: support (✅) or oppose (❌)
+4. If NO or BALANCED → neutral (△)
+5. Base ONLY on actual statements, not assumptions
+
+Output ONLY symbols, one per line, in order:
 1. ✅
 2. ❌
 3. △
-etc.
-
-Output ONLY the symbols, nothing else, one per line."""
+4. ✅
+...
+(one line per viewpoint, ONLY the symbol)"""
                 
                 response = self._call_moonshot(
                     prompt,
-                    "You are an expert at analyzing discussion participants' stances. Be accurate based on actual statements."
+                    "Analyze participant stances based on actual statements only."
                 )
                 
                 if response:
@@ -229,7 +251,7 @@ Output ONLY the symbols, nothing else, one per line."""
                     
                     print(" ".join(stances))
                 else:
-                    print("⚠️ AI failed, defaulting to △")
+                    print("⚠️ AI failed")
                     for sv in simplified_viewpoints:
                         stances_dict[participant][sv] = '△'
             
@@ -242,17 +264,21 @@ Output ONLY the symbols, nothing else, one per line."""
             return None
     
     def _parse_viewpoints(self, text: str) -> List[Tuple[str, str]]:
-        """解析 AI 返回的观点"""
+        """解析 AI 返回的观点 - 支持任意数量"""
         result = []
         lines = text.split('\n')
         i = 0
+        
+        viewpoint_num = 0
         
         while i < len(lines):
             line = lines[i].strip()
             
             if line and re.match(r'^[Vv]iewpoint\s+\d+\s*[:：]', line):
+                viewpoint_num += 1
                 full = re.sub(r'^[Vv]iewpoint\s+\d+\s*[:：]\s*', '', line).strip()
                 
+                # 查找下一行的 Simplified
                 if i + 1 < len(lines):
                     next_line = lines[i + 1].strip()
                     if re.match(r'^[Ss]implified\s*[:：]', next_line):
@@ -260,16 +286,18 @@ Output ONLY the symbols, nothing else, one per line."""
                         
                         if 5 <= len(full) <= 500 and 5 <= len(simp) <= 30:
                             result.append((full, simp))
+                            print(f"    ✓ Parsed viewpoint {viewpoint_num}")
                         
                         i += 2
                         continue
             
             i += 1
         
+        print(f"  Total viewpoints parsed: {len(result)}")
         return result
     
     def _parse_stances(self, response: str, num: int) -> List[str]:
-        """解析 AI 返回的态度符号"""
+        """解析 AI 返回的态度符号 - 支持任意数量"""
         stances = ['△'] * num
         
         # 找所有符号
