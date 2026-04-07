@@ -1,80 +1,18 @@
 """
-共识矩阵 - 修复版本
-正确解析观点和显示表格
+共识矩阵 - 完整版本
+实时提取观点和分析态度
 """
 
 import json
 import re
-import requests
-import os
 from typing import Dict, List, Tuple, Optional
-from dotenv import load_dotenv
-import streamlit as st
-
-load_dotenv()
-
-# 获取 API KEY
-MOONSHOT_KEY = None
-try:
-    if hasattr(st, 'secrets') and st.secrets:
-        MOONSHOT_KEY = st.secrets.get("MOONSHOT_API_KEY")
-except:
-    pass
-
-if not MOONSHOT_KEY:
-    MOONSHOT_KEY = os.getenv("MOONSHOT_API_KEY")
-
-print(f"✅ MOONSHOT_API_KEY ready: {bool(MOONSHOT_KEY)}")
 
 
 class ConsensusMatrix:
     """共识矩阵计算器"""
     
     def __init__(self):
-        self.api_key = MOONSHOT_KEY
-    
-    def _call_moonshot(self, prompt: str, system_prompt: str = "") -> Optional[str]:
-        """直接调用 Moonshot API"""
-        if not self.api_key:
-            print("❌ MOONSHOT_API_KEY not found")
-            return None
-        
-        try:
-            url = "https://api.moonshot.cn/v1/chat/completions"
-            
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}"
-            }
-            
-            payload = {
-                "model": "moonshot-v1-8k",
-                "messages": [
-                    {"role": "system", "content": system_prompt or "You are a helpful assistant."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.3,
-                "max_tokens": 1000
-            }
-            
-            print(f"[📤 Calling Moonshot API...]")
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
-            
-            print(f"[📥 Status: {response.status_code}]")
-            
-            if response.status_code == 200:
-                result = response.json()
-                if "choices" in result and len(result["choices"]) > 0:
-                    content = result["choices"][0]["message"]["content"].strip()
-                    print(f"[✅ Got {len(content)} chars]")
-                    return content
-            else:
-                print(f"❌ API Error {response.status_code}")
-        
-        except Exception as e:
-            print(f"❌ API Error: {e}")
-        
-        return None
+        self.cache = {}
     
     def extract_and_simplify_viewpoints(
         self, 
@@ -83,74 +21,108 @@ class ConsensusMatrix:
         llm_mode: str = "Control"
     ) -> Optional[List[Tuple[str, str]]]:
         """
-        提取观点 - 使用 Moonshot API
+        提取观点并生成简化版本
+        返回: [(完整观点, 简化观点), ...]
         """
         try:
+            from ai_agent import generate_response
+            
             user_messages = [m for m in messages if m.get('user') != 'AI']
             if not user_messages:
                 return None
             
-            print(f"\n📊 Extracting viewpoints from {len(user_messages)} messages...")
-            
             # 构建讨论文本
             discussion_text = "\n".join([
-                f"{m.get('user')}: {m.get('message', '')}"
+                f"[{m.get('user')}]: {m.get('message', '')}"
                 for m in user_messages
             ])
             
-            if len(discussion_text) > 2500:
-                discussion_text = discussion_text[:2500]
+            if len(discussion_text) > 3000:
+                discussion_text = discussion_text[:3000]
             
-            print(f"Discussion length: {len(discussion_text)} chars")
+            print(f"📊 提取观点 ({len(user_messages)} 条消息)")
             
-            # 提取观点 - 更精确的提示
-            prompt = f"""Extract 2-5 main viewpoints from this discussion.
+            # 第一步：提取完整观点
+            prompt_extract = f"""Extract 1-5 KEY viewpoints from this discussion.
 
-DISCUSSION:
+Discussion:
 {discussion_text}
 
-Output ONLY a numbered list, one viewpoint per line:
-1. Viewpoint about topic A
-2. Viewpoint about topic B
-3. Viewpoint about topic C
+Output format (numbered list):
+1. Complete viewpoint 1
+2. Complete viewpoint 2
+...
 
-IMPORTANT: Start each line with number and period, then the viewpoint.
-No other text before or after the list.
-"""
+Rules:
+- Extract ONLY actual viewpoints mentioned by participants
+- NO invented viewpoints
+- Keep the original meaning
+- Each viewpoint 1-2 sentences"""
             
-            response = self._call_moonshot(
-                prompt,
-                "Extract viewpoints as a numbered list. Only output the list."
+            response = generate_response(
+                llm_mode, 
+                prompt_extract, 
+                group_id="system", 
+                user="System"
             )
             
-            print(f"\n=== RAW RESPONSE ===")
-            print(response)
-            print(f"=== END RESPONSE ===\n")
+            if not response:
+                print("❌ 无法提取观点")
+                return None
             
-            if response and len(response) > 10:
-                viewpoints = self._parse_viewpoints_smart(response)
-                print(f"Parsed viewpoints: {viewpoints}")
+            full_viewpoints = self._parse_numbered_list(response)
+            print(f"✓ 提取了 {len(full_viewpoints)} 个观点")
+            
+            # 第二步：生成简化版本
+            if full_viewpoints:
+                viewpoints_str = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(full_viewpoints)])
                 
-                if viewpoints and len(viewpoints) >= 1:
-                    print(f"✓ Extracted {len(viewpoints)} viewpoints:")
-                    for i, vp in enumerate(viewpoints, 1):
-                        print(f"  {i}. {vp}")
-                    
-                    result = [(vp, vp) for vp in viewpoints]
-                    return result
-            
-            # 备用方案
-            print("📌 API response too short, using fallback...")
-            viewpoints = self._heuristic_extract_viewpoints(user_messages)
-            if viewpoints:
-                print(f"✓ Fallback extracted {len(viewpoints)} viewpoints")
-                result = [(vp, vp) for vp in viewpoints]
+                prompt_simplify = f"""Simplify each viewpoint to 8-15 Chinese characters.
+
+Original viewpoints:
+{viewpoints_str}
+
+Output format (numbered list):
+1. 简化版本1
+2. 简化版本2
+...
+
+Rules:
+- Keep the KEY meaning
+- 8-15 characters ONLY
+- Use simple words
+- No complex sentences
+
+Examples:
+"Remote work saves commute time" → "节省通勤时间"
+"远程办公可以节省上班时间" → "节省通勤"
+"""
+                
+                response = generate_response(
+                    llm_mode, 
+                    prompt_simplify, 
+                    group_id="system", 
+                    user="System"
+                )
+                
+                simplified_viewpoints = self._parse_numbered_list(response) if response else []
+                
+                # 创建 (完整, 简化) 对
+                result = []
+                for i, full in enumerate(full_viewpoints):
+                    simplified = simplified_viewpoints[i] if i < len(simplified_viewpoints) else full[:15]
+                    # 确保不超过 20 字
+                    if len(simplified) > 20:
+                        simplified = simplified[:17] + ".."
+                    result.append((full, simplified))
+                
+                print(f"✓ 简化完成\n")
                 return result
             
             return None
         
         except Exception as e:
-            print(f"❌ Extract Error: {e}")
+            print(f"❌ 提取观点错误: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -163,157 +135,124 @@ No other text before or after the list.
         llm_mode: str = "Control"
     ) -> Optional[Dict[str, Dict[str, str]]]:
         """
-        分析态度
+        分析每个参与者对每个观点的态度
+        返回: {参与者: {简化观点: '✅/❌/△'}}
         """
         try:
-            print(f"\n📈 Analyzing stances for {len(participants)} participants...")
-            print(f"Viewpoints to analyze: {len(viewpoints_pairs)}")
+            from ai_agent import generate_response
+            
+            print(f"📊 分析态度 ({len(participants)} 人 × {len(viewpoints_pairs)} 观点)")
             
             stances_dict = {p: {} for p in participants}
             
-            # 获取发言者及其消息
-            speaker_messages = {}
-            for m in messages:
-                user = m.get('user')
-                if user and user != 'AI':
-                    if user not in speaker_messages:
-                        speaker_messages[user] = []
-                    speaker_messages[user].append(m.get('message', ''))
-            
-            viewpoints = [vp[0] for vp in viewpoints_pairs]
+            # 获取发言者
+            speakers = set([m.get('user') for m in messages if m.get('user') != 'AI'])
             
             # 完整讨论文本
             full_discussion = "\n".join([
-                f"{m.get('user')}: {m.get('message', '')}"
+                f"[{m.get('user')}]: {m.get('message', '')}"
                 for m in messages
-                if m.get('user') != 'AI'
             ])
             
-            if len(full_discussion) > 3000:
-                full_discussion = full_discussion[:3000]
+            if len(full_discussion) > 4000:
+                full_discussion = full_discussion[:4000]
+            
+            full_viewpoints = [vp[0] for vp in viewpoints_pairs]
+            simplified_viewpoints = [vp[1] for vp in viewpoints_pairs]
             
             for participant in participants:
-                print(f"  👤 {participant}...", end=" ")
+                print(f"👤 {participant}")
                 
                 # 未发言 → 全部中立
-                if participant not in speaker_messages:
-                    print("△ (not spoken)")
-                    stances_dict[participant] = {vp: '△' for vp in viewpoints}
+                if participant not in speakers:
+                    print(f"   (未发言) 标记为中立")
+                    stances_dict[participant] = {sv: '△' for sv in simplified_viewpoints}
                     continue
                 
-                participant_msgs = speaker_messages[participant]
+                # 获取该参与者的消息
+                participant_msgs = [
+                    m.get('message', '')
+                    for m in messages
+                    if m.get('user') == participant and m.get('message', '')
+                ]
+                
                 participant_text = "\n".join(participant_msgs)
+                viewpoints_str = "\n".join([f"{i+1}. {full_viewpoints[i]}" for i in range(len(full_viewpoints))])
                 
-                print(f"\n    Analyzing {len(viewpoints)} viewpoints...")
-                
-                # 对每个观点分别分析
-                for idx, viewpoint in enumerate(viewpoints):
-                    prompt = f"""Determine {participant}'s stance on this viewpoint based on their actual statements.
+                prompt = f"""Analyze {participant}'s stance on EACH viewpoint.
 
-VIEWPOINT: {viewpoint}
+DISCUSSION:
+{full_discussion}
+
+VIEWPOINTS:
+{viewpoints_str}
 
 {participant}'s STATEMENTS:
 {participant_text}
 
-Does {participant} SUPPORT (✅), OPPOSE (❌), or is NEUTRAL (△) about this viewpoint?
+For each viewpoint (1-{len(full_viewpoints)}), output:
+1:✅
+2:❌
+3:△
+...
 
-Respond with ONLY ONE symbol: ✅ or ❌ or △
-No other text."""
-                    
-                    response = self._call_moonshot(
-                        prompt,
-                        "Analyze stance. Respond with ONLY one symbol: ✅ or ❌ or △"
-                    )
-                    
-                    stance = self._extract_stance_symbol(response)
-                    stances_dict[participant][viewpoint] = stance
-                    print(f"    [{idx+1}/{len(viewpoints)}] {viewpoint[:30]}... → {stance}")
+Rules:
+✅ = {participant} explicitly supports
+❌ = {participant} explicitly opposes  
+△ = {participant} doesn't mention or unclear"""
                 
-                print(f"  ✓ {participant}: {' '.join([stances_dict[participant][vp] for vp in viewpoints])}")
+                response = generate_response(
+                    llm_mode, 
+                    prompt, 
+                    group_id="system", 
+                    user="System"
+                )
+                
+                stances = self._parse_stances(response, len(full_viewpoints))
+                
+                for idx, stance in enumerate(stances):
+                    if idx < len(simplified_viewpoints):
+                        stances_dict[participant][simplified_viewpoints[idx]] = stance
+                        emoji = "✅" if stance == "✅" else ("❌" if stance == "❌" else "△")
+                        print(f"   {idx+1}. {emoji}")
             
             print()
             return stances_dict
         
         except Exception as e:
-            print(f"❌ Analyze Error: {e}")
+            print(f"❌ 分析态度错误: {e}")
             import traceback
             traceback.print_exc()
             return None
     
-    def _parse_viewpoints_smart(self, text: str) -> List[str]:
-        """智能解析观点 - 改进版"""
-        if not text:
-            return []
-        
+    def _parse_numbered_list(self, text: str) -> List[str]:
+        """解析编号列表"""
         items = []
-        lines = text.split('\n')
-        
-        print(f"[DEBUG] Parsing {len(lines)} lines")
-        
-        for line_num, line in enumerate(lines):
+        for line in text.split('\n'):
             line = line.strip()
-            
-            # 跳过空行
-            if not line or len(line) < 5:
-                continue
-            
-            print(f"  Line {line_num}: '{line[:60]}...'")
-            
-            # 匹配 "1. 观点" 或 "1) 观点" 格式
             match = re.match(r'^[\d]+[\.\)]\s+(.+)$', line)
             if match:
                 item = match.group(1).strip()
-                print(f"    ✓ Matched: '{item[:60]}...'")
-                if 5 <= len(item) <= 1000:
+                if len(item) > 2 and len(item) < 500:
                     items.append(item)
-                continue
-            
-            # 如果以其他格式开头但看起来像观点
-            if len(line) > 20 and not line.startswith('IMPORTANT'):
-                # 可能是没有编号的观点
-                if '.' not in line[:3]:  # 不是句子的一部分
-                    print(f"    ~ Possible viewpoint (no number): '{line[:60]}...'")
-        
-        print(f"[DEBUG] Final items: {len(items)}")
-        return items[:5]
+        return items
     
-    def _extract_stance_symbol(self, response: str) -> str:
-        """从响应中提取态度符号"""
+    def _parse_stances(self, response: str, num_viewpoints: int) -> List[str]:
+        """解析态度响应"""
+        stances = ['△'] * num_viewpoints
+        
         if not response:
-            return '△'
+            return stances
         
-        # 查找第一个符号
-        if '✅' in response:
-            return '✅'
-        if '❌' in response:
-            return '❌'
-        if '△' in response:
-            return '△'
+        # 查找 "数字:符号" 格式
+        matches = re.finditer(r'(\d+)\s*:\s*([✅❌△])', response)
+        for match in matches:
+            try:
+                idx = int(match.group(1)) - 1
+                stance = match.group(2)
+                if 0 <= idx < num_viewpoints:
+                    stances[idx] = stance
+            except:
+                pass
         
-        # 根据关键词判断
-        response_lower = response.lower()
-        if 'support' in response_lower or 'agree' in response_lower or 'yes' in response_lower:
-            return '✅'
-        if 'oppose' in response_lower or 'disagree' in response_lower or 'no' in response_lower:
-            return '❌'
-        
-        return '△'
-    
-    def _heuristic_extract_viewpoints(self, messages: List[Dict]) -> List[str]:
-        """启发式提取观点（备用方案）"""
-        viewpoints = []
-        
-        for msg in messages:
-            text = msg.get('message', '').strip()
-            if 15 < len(text) < 500:
-                viewpoints.append(text)
-        
-        seen = set()
-        unique = []
-        for vp in viewpoints:
-            if vp.lower() not in seen:
-                seen.add(vp.lower())
-                unique.append(vp)
-        
-        print(f"[Heuristic] Extracted {len(unique)} unique viewpoints")
-        return unique[:5]
+        return stances
