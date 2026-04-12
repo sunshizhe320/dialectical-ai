@@ -189,14 +189,10 @@ if "session_started" not in st.session_state:
     st.session_state.session_started = False
 if "session_start_time" not in st.session_state:
     st.session_state.session_start_time = None
-
-# Auto-refresh
-if st.session_state.session_started:
-    if "last_refresh" not in st.session_state:
-        st.session_state.last_refresh = datetime.now()
-    if (datetime.now() - st.session_state.last_refresh).total_seconds() > 1.0:
-        st.session_state.last_refresh = datetime.now()
-        st.rerun()
+if "sending" not in st.session_state:
+    st.session_state.sending = False
+if "user_input" not in st.session_state:
+    st.session_state.user_input = ""
 
 # ========== AI Mode Configuration ==========
 MODE_OPTIONS = {
@@ -464,21 +460,30 @@ else:
         else:
             st.info("💭 Start discussing!")
 
-        # Message Input
+        # Message Input (use form to avoid rerun issues)
         st.markdown("### ✏️ Your Message")
-        col1, col2, col3 = st.columns([0.72, 0.14, 0.14])
-        with col1:
-            user_input = st.text_area("", placeholder="Share your thoughts... (use @AI to mention AI)", height=80, label_visibility="collapsed")
-        with col2:
-            st.write("")
-            send_btn = st.button("📤 Send", use_container_width=True)
-        with col3:
-            st.write("")
-            clear_btn = st.button("🗑️ Clear", use_container_width=True)
+        with st.form("send_form", clear_on_submit=False):
+            col1, col2, col3 = st.columns([0.72, 0.14, 0.14])
+            with col1:
+                user_input = st.text_area(
+                    "",
+                    placeholder="Share your thoughts... (use @AI to mention AI)",
+                    height=80,
+                    label_visibility="collapsed",
+                    key="user_input"
+                )
+            with col2:
+                st.write("")
+                send_btn = st.form_submit_button("📤 Send")
+            with col3:
+                st.write("")
+                clear_btn = st.form_submit_button("🗑️ Clear")
 
         # ========== Handle Send ==========
         if send_btn:
             if user_input.strip():
+                st.session_state.sending = True
+
                 db.save_message(
                     session_id=st.session_state.session_id,
                     user=st.session_state.user_name,
@@ -536,7 +541,7 @@ else:
                                 ai_placeholder = st.empty()
                                 stream_ai_response(ai_reply, ai_placeholder)
 
-                                with st.expander("📊 API Performance Details"):
+                                with st.expander("��� API Performance Details"):
                                     col1, col2, col3 = st.columns(3)
                                     with col1:
                                         st.metric("⏱️ Response Latency", f"{latency:.2f}s")
@@ -564,11 +569,13 @@ else:
                                 is_success=0
                             )
 
+                st.session_state.sending = False
                 time.sleep(0.3)
                 st.rerun()
 
-            if clear_btn:
-                st.rerun()
+        if clear_btn:
+            st.session_state.user_input = ""
+            st.rerun()
 
         # ========== Consensus Matrix ==========
         st.divider()
@@ -700,3 +707,13 @@ else:
             with col4:
                 avg_latency = sum([m.get('latency', 0) for m in all_messages if m.get('latency')]) / max(len(all_messages), 1)
                 st.metric("Avg Latency", f"{avg_latency:.2f}s")
+
+# ========== Auto-refresh (MOVED TO BOTTOM) ==========
+if st.session_state.session_started:
+    if "last_refresh" not in st.session_state:
+        st.session_state.last_refresh = datetime.now()
+    # 发送中不刷新
+    if not st.session_state.get("sending", False):
+        if (datetime.now() - st.session_state.last_refresh).total_seconds() > 1.0:
+            st.session_state.last_refresh = datetime.now()
+            st.rerun()
