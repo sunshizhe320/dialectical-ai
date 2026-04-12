@@ -1,7 +1,7 @@
+import streamlit as st
 st.write("DEBUG app file:", __file__)
 st.write("DEBUG app loaded at:", datetime.now())
 st.write("DEBUG git check:", "v2-send-fix")
-import streamlit as st
 import time
 import io
 import csv
