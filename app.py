@@ -497,6 +497,9 @@ with st.form("send_form", clear_on_submit=False):
     with col3:
         st.write("")
         clear_btn = st.form_submit_button("🗑️ Clear", on_click=on_clear)
+st.write("DEBUG send_btn:", send_btn)
+st.write("DEBUG send_clicked:", st.session_state.get("send_clicked"))
+st.write("DEBUG user_input:", st.session_state.get("user_input"))
 
 # ========== Handle Send ==========
 if st.session_state.send_clicked:
