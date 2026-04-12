@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 import streamlit as st
 
 from api_wrapper import KimiAPIWrapper
-import db
 
 load_dotenv()
 
@@ -48,6 +47,8 @@ class ConsensusMatrix:
     ) -> Optional[List[Tuple[str, str]]]:
         """AI 提取观点"""
         try:
+            import db  # ✅ 函数内导入，避免循环引用
+
             user_messages = [m for m in messages if m.get('user') != 'AI']
             if not user_messages:
                 return None
@@ -83,13 +84,11 @@ Rules:
 - No duplicates
 - Be complete and clear"""
             
-            # ✅ 调用 API 并获取元数据
             response, metadata = self._call_moonshot(
                 prompt,
                 "You are an expert discussion analyst. Extract viewpoints accurately."
             )
             
-            # ✅ 保存 API 调用记录
             if session_id:
                 db.save_message(
                     session_id=session_id,
@@ -132,6 +131,8 @@ Rules:
     ) -> Optional[Dict[str, Dict[str, str]]]:
         """AI 分析态度"""
         try:
+            import db  # ✅ 函数内导入，避免循环引用
+
             print(f"\n📈 AI analyzing stances...")
             
             stances_dict = {p: {} for p in participants}
