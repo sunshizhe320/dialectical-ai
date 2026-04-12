@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 import streamlit as st
 
 from api_wrapper import KimiAPIWrapper
-from database import DatabaseManager
+import db
 
 load_dotenv()
 
