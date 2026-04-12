@@ -712,12 +712,16 @@ else:
                 avg_latency = sum([m.get('latency', 0) for m in all_messages if m.get('latency')]) / max(len(all_messages), 1)
                 st.metric("Avg Latency", f"{avg_latency:.2f}s")
 
-# ========== Auto-refresh (MOVED TO BOTTOM) ==========
+# ========== Auto-refresh (SAFE) ==========
 if st.session_state.session_started:
     if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = datetime.now()
-    # 发送中不刷新
-    if not st.session_state.get("sending", False):
-        if (datetime.now() - st.session_state.last_refresh).total_seconds() > 1.0:
-            st.session_state.last_refresh = datetime.now()
-            st.rerun()
+    if "last_action" not in st.session_state:
+        st.session_state.last_action = datetime.now()
+
+    # 3 秒内有操作就不刷新
+    if (datetime.now() - st.session_state.last_action).total_seconds() >= 3:
+        if not st.session_state.get("sending", False):
+            if (datetime.now() - st.session_state.last_refresh).total_seconds() > 3.0:
+                st.session_state.last_refresh = datetime.now()
+                st.rerun()
