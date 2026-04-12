@@ -464,43 +464,121 @@ else:
         else:
             st.info("💭 Start discussing!")
 
-# Message Input (use form to avoid rerun issues)
+# Message Input (NO form, reliable click)
 st.markdown("### ✏️ Your Message")
 
-# --- callbacks to guarantee click captured ---
-if "send_clicked" not in st.session_state:
-    st.session_state.send_clicked = False
-if "last_action" not in st.session_state:
-    st.session_state.last_action = datetime.now()
+col1, col2, col3 = st.columns([0.72, 0.14, 0.14])
+with col1:
+    user_input = st.text_area(
+        "",
+        placeholder="Share your thoughts... (use @AI to mention AI)",
+        height=80,
+        label_visibility="collapsed",
+        key="user_input"
+    )
+with col2:
+    st.write("")
+    send_btn = st.button("📤 Send", use_container_width=True, key="send_btn")
+with col3:
+    st.write("")
+    clear_btn = st.button("🗑️ Clear", use_container_width=True, key="clear_btn")
 
-def on_send():
-    st.session_state.send_clicked = True
+# ========== Handle Send ==========
+if send_btn:
     st.session_state.last_action = datetime.now()
+    if user_input.strip():
+        st.session_state.sending = True
 
-def on_clear():
-    st.session_state.user_input = ""
-    st.session_state.last_action = datetime.now()
-
-with st.form("send_form", clear_on_submit=False):
-    col1, col2, col3 = st.columns([0.72, 0.14, 0.14])
-    with col1:
-        user_input = st.text_area(
-            "",
-            placeholder="Share your thoughts... (use @AI to mention AI)",
-            height=80,
-            label_visibility="collapsed",
-            key="user_input"
+        db.save_message(
+            session_id=st.session_state.session_id,
+            user=st.session_state.user_name,
+            role="user",
+            message=user_input,
+            latency=0,
+            tokens_used=0,
+            tokens_input=0,
+            tokens_output=0,
+            is_success=1
         )
-    with col2:
-        st.write("")
-        send_btn = st.form_submit_button("📤 Send", on_click=on_send)
-    with col3:
-        st.write("")
-        clear_btn = st.form_submit_button("🗑️ Clear", on_click=on_clear)
-st.write("DEBUG send_btn:", send_btn)
-st.write("DEBUG send_clicked:", st.session_state.get("send_clicked"))
-st.write("DEBUG user_input:", st.session_state.get("user_input"))
 
+        add_participant(st.session_state.session_id, st.session_state.user_name)
+        ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
+
+        if ai_triggered and mode != "Control":
+            conversation_history = db.get_history(st.session_state.session_id, limit=20)
+            with st.spinner("🤖 AI is thinking..."):
+                try:
+                    result = generate_response(
+                        mode,
+                        user_input,
+                        group_id=st.session_state.session_id,
+                        user=st.session_state.user_name,
+                        conversation_history=conversation_history
+                    )
+
+                    if isinstance(result, tuple):
+                        ai_reply, metadata = result
+                        tokens_used = metadata.get('tokens_used', 0)
+                        tokens_input = metadata.get('tokens_input', 0)
+                        tokens_output = metadata.get('tokens_output', 0)
+                        latency = metadata.get('latency', 0)
+                    else:
+                        ai_reply = result
+                        tokens_used = 0
+                        tokens_input = 0
+                        tokens_output = 0
+                        latency = 0
+
+                    if ai_reply:
+                        db.save_message(
+                            session_id=st.session_state.session_id,
+                            user="AI",
+                            role="assistant",
+                            message=ai_reply,
+                            latency=latency,
+                            tokens_used=tokens_used,
+                            tokens_input=tokens_input,
+                            tokens_output=tokens_output,
+                            is_success=1
+                        )
+
+                        ai_placeholder = st.empty()
+                        stream_ai_response(ai_reply, ai_placeholder)
+
+                        with st.expander("📊 API Performance Details"):
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("⏱️ Response Latency", f"{latency:.2f}s")
+                            with col2:
+                                st.metric("📊 Total Tokens", tokens_used)
+                            with col3:
+                                st.metric("Input | Output", f"{tokens_input} | {tokens_output}")
+                    else:
+                        st.error("❌ AI returned empty result")
+                except Exception as e:
+                    st.error(f"❌ Error calling AI: {str(e)}")
+                    db.save_message(
+                        session_id=st.session_state.session_id,
+                        user="AI",
+                        role="assistant",
+                        message=f"[Exception: {str(e)}]",
+                        latency=0,
+                        tokens_used=0,
+                        tokens_input=0,
+                        tokens_output=0,
+                        error_code='EXCEPTION',
+                        error_message=str(e),
+                        is_success=0
+                    )
+
+        st.session_state.sending = False
+        time.sleep(0.3)
+        st.rerun()
+
+if clear_btn:
+    st.session_state.last_action = datetime.now()
+    st.session_state.user_input = ""
+    st.rerun()
 # ========== Handle Send ==========
 if st.session_state.send_clicked:
     st.session_state.send_clicked = False
