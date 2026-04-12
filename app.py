@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
+from consensus_matrix import ConsensusMatrix
 
 import db
 from api_wrapper import KimiAPIWrapper

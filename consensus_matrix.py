@@ -17,7 +17,6 @@ import db
 load_dotenv()
 
 MOONSHOT_KEY = os.getenv("MOONSHOT_API_KEY") or st.secrets.get("MOONSHOT_API_KEY", "")
-db = DatabaseManager()
 
 
 class ConsensusMatrix:
@@ -96,7 +95,7 @@ Rules:
                     session_id=session_id,
                     user="AI",
                     role="system",
-                    content=f"[Viewpoint Extraction]\nPrompt length: {len(discussion)}",
+                    message=f"[Viewpoint Extraction]\nPrompt length: {len(discussion)}",
                     latency=metadata.get('latency', 0),
                     tokens_used=metadata.get('tokens_used', 0),
                     tokens_input=metadata.get('tokens_input', 0),
@@ -104,13 +103,11 @@ Rules:
                     error_log=metadata.get('error_log'),
                     error_code=metadata.get('error_code'),
                     error_message=metadata.get('error_message'),
-                    retry_count=metadata.get('retry_count', 0),
-                    is_success=1 if metadata['success'] else 0,
-                    quality_score=0.9 if metadata['success'] else 0
+                    is_success=1 if metadata.get('success') else 0
                 )
             
             if not response:
-                print(f"❌ API failed: {metadata['error_code']}")
+                print(f"❌ API failed: {metadata.get('error_code')}")
                 return None
             
             result = self._parse_viewpoints(response)
@@ -139,7 +136,6 @@ Rules:
             
             stances_dict = {p: {} for p in participants}
             
-            # 获取发言者
             speaker_messages = {}
             for m in messages:
                 user = m.get('user')
@@ -162,7 +158,6 @@ Rules:
             
             viewpoints_text = "\n".join([f"{i+1}. {vp}" for i, vp in enumerate(full_viewpoints)])
             
-            # 批量分析所有参与者
             for participant in participants:
                 print(f"  👤 {participant}...", end=" ")
                 
@@ -191,16 +186,14 @@ For EACH viewpoint (1, 2, 3, etc.):
 
 Output ONLY the symbols, nothing else, one per line."""
                 
-                # ✅ 调用 API 并获取元数据
                 response, metadata = self._call_moonshot(prompt, "Analyze stances accurately.")
                 
-                # ✅ 保存 API 调用记录
                 if session_id:
                     db.save_message(
                         session_id=session_id,
                         user="AI",
                         role="system",
-                        content=f"[Stance Analysis for {participant}]",
+                        message=f"[Stance Analysis for {participant}]",
                         latency=metadata.get('latency', 0),
                         tokens_used=metadata.get('tokens_used', 0),
                         tokens_input=metadata.get('tokens_input', 0),
@@ -208,20 +201,17 @@ Output ONLY the symbols, nothing else, one per line."""
                         error_log=metadata.get('error_log'),
                         error_code=metadata.get('error_code'),
                         error_message=metadata.get('error_message'),
-                        retry_count=metadata.get('retry_count', 0),
-                        is_success=1 if metadata['success'] else 0
+                        is_success=1 if metadata.get('success') else 0
                     )
                 
                 if response:
                     stances = self._parse_stances(response, len(full_viewpoints))
-                    
                     for idx, stance in enumerate(stances):
                         if idx < len(simplified_viewpoints):
                             stances_dict[participant][simplified_viewpoints[idx]] = stance
-                    
                     print(" ".join(stances))
                 else:
-                    print(f"⚠️ Error: {metadata['error_code']}")
+                    print(f"⚠️ Error: {metadata.get('error_code')}")
                     for sv in simplified_viewpoints:
                         stances_dict[participant][sv] = '△'
             
@@ -241,31 +231,23 @@ Output ONLY the symbols, nothing else, one per line."""
         
         while i < len(lines):
             line = lines[i].strip()
-            
             if line and re.match(r'^[Vv]iewpoint\s+\d+\s*[:：]', line):
                 full = re.sub(r'^[Vv]iewpoint\s+\d+\s*[:：]\s*', '', line).strip()
-                
                 if i + 1 < len(lines):
                     next_line = lines[i + 1].strip()
                     if re.match(r'^[Ss]implified\s*[:：]', next_line):
                         simp = re.sub(r'^[Ss]implified\s*[:：]\s*', '', next_line).strip()
-                        
                         if 5 <= len(full) <= 500 and 5 <= len(simp) <= 30:
                             result.append((full, simp))
-                        
                         i += 2
                         continue
-            
             i += 1
-        
         return result
     
     def _parse_stances(self, response: str, num: int) -> List[str]:
         """解析态度符号"""
         stances = ['△'] * num
         symbols = re.findall(r'[✅❌△]', response)
-        
         for i, symbol in enumerate(symbols[:num]):
             stances[i] = symbol
-        
         return stances
