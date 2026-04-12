@@ -1,7 +1,7 @@
 """
-ai_agent.py - Complete Fix with Full Logging
-API Response Generation with Comprehensive Error Logging
+ai_agent.py - Full Version with Logging + Latency + Token Usage
 """
+
 import os
 import sys
 import random
@@ -50,29 +50,42 @@ def _log(message):
 def _call_kimi_api(system_prompt, user_message, max_tokens=500):
     """
     Unified API Call with Complete Error Logging
-    ✅ Fixed: Using .cn domain instead of .ai
+    ✅ Returns (content, metadata)
     """
     _log(f"\n[🔄 _call_kimi_api START]")
     _log(f"  MOONSHOT_KEY: {bool(MOONSHOT_KEY)}")
     _log(f"  max_tokens: {max_tokens}")
     
+    metadata = {
+        "success": False,
+        "latency": 0.0,
+        "tokens_used": 0,
+        "tokens_input": 0,
+        "tokens_output": 0,
+        "error_code": None,
+        "error_message": None
+    }
+    
     if not MOONSHOT_KEY:
         _log(f"❌ MOONSHOT_KEY is None!")
-        return None
+        metadata["error_code"] = "NO_API_KEY"
+        metadata["error_message"] = "API Key not set"
+        return None, metadata
+    
+    start_time = time.time()
     
     try:
         _log(f"[📝 Preparing request]")
         _log(f"  System Prompt Length: {len(system_prompt)}")
         _log(f"  User Message Length: {len(user_message)}")
         
-        url = "https://api.moonshot.cn/v1/chat/completions"  # ✅ 改成 .cn
+        url = "https://api.moonshot.cn/v1/chat/completions"
         
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {MOONSHOT_KEY}"
         }
         
-        # 确保 system prompt 包含英文强制指令
         full_system_prompt = system_prompt + "\n\n[FINAL INSTRUCTION]: Always respond in English, never in other languages."
         
         payload = {
@@ -81,7 +94,7 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
                 {"role": "system", "content": full_system_prompt},
                 {"role": "user", "content": user_message}
             ],
-            "temperature": 0.3,  # 降低温度以提高指令遵循度
+            "temperature": 0.3,
             "max_tokens": max_tokens
         }
         
@@ -95,10 +108,12 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
             timeout=60
         )
         
+        latency = time.time() - start_time
+        metadata["latency"] = latency
+        
         _log(f"[📥 Response received]")
         _log(f"  Status Code: {response.status_code}")
         _log(f"  Response Length: {len(response.text)}")
-        
         _log(f"  Response Text: {response.text[:500]}")
         
         if response.status_code == 200:
@@ -106,6 +121,12 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
                 result = response.json()
                 _log(f"  Response JSON parsed successfully")
                 _log(f"  Response Keys: {list(result.keys())}")
+                
+                # ✅ 提取 tokens
+                usage = result.get("usage", {})
+                metadata["tokens_input"] = usage.get("prompt_tokens", 0)
+                metadata["tokens_output"] = usage.get("completion_tokens", 0)
+                metadata["tokens_used"] = usage.get("total_tokens", 0)
                 
                 if "choices" in result:
                     _log(f"  Choices count: {len(result['choices'])}")
@@ -123,7 +144,8 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
                         if content:
                             _log(f"✅ API Call Success! Got {len(content)} chars")
                             _log(f"[🔄 _call_kimi_api END - SUCCESS]")
-                            return content
+                            metadata["success"] = True
+                            return content, metadata
                         else:
                             _log(f"❌ Content is empty")
                     else:
@@ -134,29 +156,42 @@ def _call_kimi_api(system_prompt, user_message, max_tokens=500):
             except json.JSONDecodeError as je:
                 _log(f"❌ JSON Parse Error: {str(je)}")
                 _log(f"  Response text: {response.text[:200]}")
+                metadata["error_code"] = "JSON_ERROR"
+                metadata["error_message"] = str(je)
         else:
             _log(f"❌ HTTP Error {response.status_code}")
             _log(f"  Response: {response.text[:300]}")
+            metadata["error_code"] = str(response.status_code)
+            metadata["error_message"] = response.text[:200]
         
         _log(f"[🔄 _call_kimi_api END - FAILED]")
-        return None
+        return None, metadata
     
     except requests.Timeout as te:
         _log(f"❌ Request Timeout: {str(te)}")
         _log(f"[🔄 _call_kimi_api END - TIMEOUT]")
-        return None
+        metadata["error_code"] = "TIMEOUT"
+        metadata["error_message"] = str(te)
+        metadata["latency"] = time.time() - start_time
+        return None, metadata
     
     except requests.ConnectionError as ce:
         _log(f"❌ Connection Error: {str(ce)}")
         _log(f"[🔄 _call_kimi_api END - CONNECTION ERROR]")
-        return None
+        metadata["error_code"] = "CONNECTION_ERROR"
+        metadata["error_message"] = str(ce)
+        metadata["latency"] = time.time() - start_time
+        return None, metadata
     
     except Exception as e:
         _log(f"❌ Unexpected Exception: {type(e).__name__}: {str(e)}")
         import traceback
         _log(traceback.format_exc())
         _log(f"[🔄 _call_kimi_api END - EXCEPTION]")
-        return None
+        metadata["error_code"] = "EXCEPTION"
+        metadata["error_message"] = str(e)
+        metadata["latency"] = time.time() - start_time
+        return None, metadata
 
 
 def generate_response(mode, user_message, group_id="", user="", conversation_history=None, custom_prompt=None):
@@ -170,27 +205,32 @@ def generate_response(mode, user_message, group_id="", user="", conversation_his
     if mode == "Control":
         _log(f"  Control mode detected - no AI intervention")
         _log(f"[🎯 generate_response END]")
-        return "(This is the control group - no AI intervention)"
+        return "(This is the control group - no AI intervention)", {
+            "success": True, "latency": 0, "tokens_used": 0, "tokens_input": 0, "tokens_output": 0
+        }
     
     if not MOONSHOT_KEY:
         _log(f"❌ API Key not configured")
         _log(f"[🎯 generate_response END - Using Fallback]")
-        return _get_fallback(mode)
+        return _get_fallback(mode), {
+            "success": False, "latency": 0, "tokens_used": 0, "tokens_input": 0, "tokens_output": 0,
+            "error_code": "NO_API_KEY", "error_message": "API Key not configured"
+        }
     
     system_prompt = _get_system_prompt(mode)
     
     _log(f"[📞 Calling _call_kimi_api]")
-    response = _call_kimi_api(system_prompt, user_message, max_tokens=300)
+    response, metadata = _call_kimi_api(system_prompt, user_message, max_tokens=300)
     
     if response:
         _log(f"✅ Got API response, returning it")
         _log(f"[🎯 generate_response END - SUCCESS]")
-        return response
+        return response, metadata
     else:
         _log(f"⚠️ API failed, using fallback")
         fallback = _get_fallback(mode)
         _log(f"[🎯 generate_response END - Using Fallback]")
-        return fallback
+        return fallback, metadata
 
 
 def _get_system_prompt(mode):
@@ -199,7 +239,6 @@ def _get_system_prompt(mode):
     ✅ FORCE ENGLISH OUTPUT
     """
     
-    # 最强硬的英文强制指令
     FORCE_ENGLISH = (
         "**CRITICAL INSTRUCTION**: You MUST respond ONLY in ENGLISH. "
         "No matter what language the user writes in, you must reply in English only. "
@@ -313,7 +352,7 @@ Discussion:
 Provide analysis in markdown format."""
     
     _log(f"[📞 Calling _call_kimi_api for argument map]")
-    response = _call_kimi_api(
+    response, _ = _call_kimi_api(
         system_prompt="You are an expert argumentation analyst.",
         user_message=prompt,
         max_tokens=1500
@@ -328,72 +367,3 @@ Provide analysis in markdown format."""
         _log(f"  {error_msg}")
         _log(f"[📊 generate_argument_map END - FAILED]")
         return error_msg
-def extract_viewpoints(messages):
-    """
-    从讨论消息中提取核心观点
-    Args:
-        messages: 讨论消息列表
-    Returns:
-        list: 3-4个核心观点
-    """
-    
-    if not messages or len(messages) < 2:
-        return ["观点A", "观点B", "观点C"]
-    
-    try:
-        # 准备讨论文本
-        discussion = "\n".join([
-            f"{m.get('user', 'Unknown')}: {m.get('message', '')}"
-            for m in messages[-10:]  # 最近10条消息
-        ])
-        
-        if len(discussion) > 1500:
-            discussion = discussion[:1500]
-        
-        # 调用 API
-        prompt = f"""从以下讨论中提取3-4个核心观点。每个观点用一句话表达（不超过15字）。
-
-讨论内容：
-{discussion}
-
-请直接列出观点，每行一个，不要序号或其他符号："""
-        
-        response = _call_kimi_api(
-            system_prompt="你是一个讨论分析专家。请分析讨论并提取核心观点。",
-            user_message=prompt,
-            max_tokens=200
-        )
-        
-        if response:
-            # 解析响应
-            viewpoints = []
-            for line in response.split('\n'):
-                line = line.strip()
-                
-                # 跳过空行和无关内容
-                if not line or len(line) < 3 or len(line) > 40:
-                    continue
-                
-                # 移除开头的数字、符号
-                cleaned = line
-                for prefix in ['1.', '2.', '3.', '4.', '-', '•', '·', '①', '②', '③', '④']:
-                    if cleaned.startswith(prefix):
-                        cleaned = cleaned[len(prefix):].strip()
-                        break
-                
-                if cleaned and len(cleaned) >= 3 and len(cleaned) <= 35:
-                    viewpoints.append(cleaned)
-            
-            if len(viewpoints) >= 3:
-                return viewpoints[:4]
-        
-    except Exception as e:
-        print(f"⚠️ extract_viewpoints error: {e}", flush=True)
-    
-    # 备用观点
-    return ["观点A", "观点B", "观点C"]
-
-
-# End of file
-
-# End of file

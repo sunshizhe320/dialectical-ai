@@ -738,26 +738,26 @@ if send_btn:
             message_length=len(user_input),
             char_count=len(user_input),
             word_count=len(user_input.split()),
-            is_success=1,  # 用户消息总是成功的
-            latency=0,     # 用户消息没有延迟
-            tokens_used=0  # 用户消息不消耗 token
+            is_success=1,
+            latency=0,
+            tokens_used=0
         )
-        
+
         add_participant(st.session_state.session_id, st.session_state.user_name)
-        
+
         ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
-        
+
         if ai_triggered and mode != "Control":
             conversation_history = db.get_messages(st.session_state.session_id, limit=20)
-            
+
             with st.spinner("🤖 AI is thinking..."):
                 try:
                     print(f"\n[APP] Calling generate_response with mode={mode}", flush=True)
-                    
-                    # ✅ 第 2 步：记录请求开始时间
+
+                    # ✅ 记录请求开始时间
                     api_start_time = time.time()
-                    
-                    # ✅ 改进：从 generate_response 获取元数据
+
+                    # ✅ 获取 AI 回复 + 元数据
                     result = generate_response(
                         mode,
                         user_input,
@@ -766,67 +766,59 @@ if send_btn:
                         conversation_history=conversation_history
                     )
 
-# ✅ 检查是否返回元数据
-if isinstance(result, tuple):
-    ai_reply, metadata = result
-    tokens_used = metadata.get('tokens_used', 0)
-    tokens_input = metadata.get('tokens_input', 0)
-    tokens_output = metadata.get('tokens_output', 0)
-else:
-    ai_reply = result
-    tokens_used = 0
-    tokens_input = 0
-    tokens_output = 0
-                    
-                    # ✅ 第 3 步：计算延迟
-                    latency = time.time() - api_start_time
-                    
+                    # ✅ 处理返回值
+                    if isinstance(result, tuple):
+                        ai_reply, metadata = result
+                        tokens_used = metadata.get('tokens_used', 0)
+                        tokens_input = metadata.get('tokens_input', 0)
+                        tokens_output = metadata.get('tokens_output', 0)
+                        latency = metadata.get('latency', time.time() - api_start_time)
+                    else:
+                        ai_reply = result
+                        tokens_used = 0
+                        tokens_input = 0
+                        tokens_output = 0
+                        latency = time.time() - api_start_time
+
                     if ai_reply:
-    # ✅ 使用提取的真实 token 数
-    ai_message_id = db.save_message(
-        session_id=st.session_state.session_id,
-        user="AI",
-        role="assistant",
-        content=ai_reply,
-        message_length=len(ai_reply),
-        char_count=len(ai_reply),
-        word_count=len(ai_reply.split()),
-        latency=latency,
-        tokens_used=tokens_used,  # ✅ 真实数据
-        tokens_input=tokens_input,
-        tokens_output=tokens_output,
-        is_success=1,
-        error_code=None,
-        error_message=None,
-        error_log=None,
-        quality_score=0.9
-    )
-    
-    ai_placeholder = st.empty()
-    stream_ai_response(ai_reply, ai_placeholder)
-    
-    # ✅ 显示真实的性能信息
-    with st.expander("📊 API Performance Details"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("⏱️ Response Latency", f"{latency:.2f}s")
-        with col2:
-            st.metric("📊 Total Tokens", tokens_used)
-        with col3:
-            st.metric("Input | Output", f"{tokens_input} | {tokens_output}")
-                        # ✅ 第 5 步：显示性能信息
+                        # ✅ 保存 AI 回复
+                        ai_message_id = db.save_message(
+                            session_id=st.session_state.session_id,
+                            user="AI",
+                            role="assistant",
+                            content=ai_reply,
+                            message_length=len(ai_reply),
+                            char_count=len(ai_reply),
+                            word_count=len(ai_reply.split()),
+                            latency=latency,
+                            tokens_used=tokens_used,
+                            tokens_input=tokens_input,
+                            tokens_output=tokens_output,
+                            is_success=1,
+                            error_code=None,
+                            error_message=None,
+                            error_log=None,
+                            quality_score=0.9
+                        )
+
+                        ai_placeholder = st.empty()
+                        stream_ai_response(ai_reply, ai_placeholder)
+
+                        # ✅ 显示性能信息
                         with st.expander("📊 API Performance Details"):
-                            col1, col2 = st.columns(2)
+                            col1, col2, col3 = st.columns(3)
                             with col1:
                                 st.metric("⏱️ Response Latency", f"{latency:.2f}s")
                             with col2:
-                                st.metric("📊 Tokens Used", "N/A")
-                    
+                                st.metric("📊 Total Tokens", tokens_used)
+                            with col3:
+                                st.metric("Input | Output", f"{tokens_input} | {tokens_output}")
+
                     else:
                         st.error("❌ AI returned empty result")
-                        
+
                         # ✅ 保存失败记录
-                        failed_message_id = db.save_message(
+                        db.save_message(
                             session_id=st.session_state.session_id,
                             user="AI",
                             role="assistant",
@@ -836,11 +828,11 @@ else:
                             error_message='AI returned empty result',
                             is_success=0
                         )
-                
+
                 except Exception as e:
                     st.error(f"❌ Error calling AI: {str(e)}")
                     print(f"Error: {e}")
-                    
+
                     # ✅ 保存异常
                     exception_latency = time.time() - api_start_time
                     db.save_message(
@@ -853,7 +845,7 @@ else:
                         error_message=str(e),
                         is_success=0
                     )
-        
+
         st.session_state.force_refresh = True
         time.sleep(0.3)
         st.rerun()
