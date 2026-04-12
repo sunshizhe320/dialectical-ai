@@ -195,6 +195,10 @@ if "session_start_time" not in st.session_state:
     st.session_state.session_start_time = None
 if "sending" not in st.session_state:
     st.session_state.sending = False
+if "send_clicked" not in st.session_state:
+    st.session_state.send_clicked = False
+if "last_action" not in st.session_state:
+    st.session_state.last_action = datetime.now()
 if "user_input" not in st.session_state:
     st.session_state.user_input = ""
 
