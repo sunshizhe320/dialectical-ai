@@ -322,12 +322,13 @@ if "session_started" not in st.session_state:
     st.session_state.session_started = False
 if "session_start_time" not in st.session_state:
     st.session_state.session_start_time = None
+if "sending" not in st.session_state:
+    st.session_state.sending = False
 
-# Auto-refresh
-if st.session_state.session_started:
+# Auto-refresh（仅在非发送时刷新）
+if st.session_state.session_started and not st.session_state.sending:
     if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = datetime.now()
-    
     if (datetime.now() - st.session_state.last_refresh).total_seconds() > 1.0:
         st.session_state.last_refresh = datetime.now()
         st.rerun()
@@ -709,6 +710,8 @@ else:
         
         # ========== Handle Send ==========
         if send_btn:
+            st.session_state.sending = True
+
             if user_input.strip():
                 db.save_message(
                     session_id=st.session_state.session_id,
@@ -768,15 +771,6 @@ else:
                                 ai_placeholder = st.empty()
                                 stream_ai_response(ai_reply, ai_placeholder)
 
-                                with st.expander("📊 API Performance Details"):
-                                    col1, col2, col3 = st.columns(3)
-                                    with col1:
-                                        st.metric("⏱️ Response Latency", f"{latency:.2f}s")
-                                    with col2:
-                                        st.metric("📊 Total Tokens", tokens_used)
-                                    with col3:
-                                        st.metric("Input | Output", f"{tokens_input} | {tokens_output}")
-
                             else:
                                 st.error("❌ AI returned empty result")
 
@@ -796,8 +790,9 @@ else:
                                 is_success=0
                             )
 
-                time.sleep(0.3)
-                st.rerun()
+            st.session_state.sending = False
+            time.sleep(0.2)
+            st.rerun()
 
         if clear_btn:
             st.rerun()
