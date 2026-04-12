@@ -1,294 +1,984 @@
-# db.py - SQLite 数据库管理模块（升级版：支持迁移 + 完整字段）
-import sqlite3
+import streamlit as st
 import time
+import io
+import csv
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
+from dotenv import load_dotenv
 
-DB_PATH = "chat_logs.db"
-DEBUG = False
+import db
+from api_wrapper import KimiAPIWrapper
+from ai_agent import generate_response, generate_argument_map
+from consensus_matrix import ConsensusMatrix
 
+db.init_db()
 
-def init_db():
-    """初始化数据库（带迁移）"""
+# 尝试导入新模块，如果不存在则跳过
+try:
+    from ai_scaffolding import classify_message_type, generate_scaffolding_questions, extract_core_viewpoints
+except:
+    classify_message_type = None
+
+st.set_page_config(
+    page_title="Dialectical AI Partner",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ========== File system storage (仅保留 session 配置) ==========
+SESSIONS_FILE = "sessions_data.json"
+PARTICIPANTS_FILE = "participants_data.json"
+
+def load_all_sessions():
+    """Load all sessions from file"""
+    if Path(SESSIONS_FILE).exists():
+        try:
+            with open(SESSIONS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_all_sessions(data):
+    """Save all sessions to file"""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-
-        # ✅ 如果 messages 表存在但缺 session_id，就重建
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
-        if c.fetchone():
-            c.execute("PRAGMA table_info(messages)")
-            cols = [row[1] for row in c.fetchall()]
-            if "session_id" not in cols:
-                print("⚠️ Detected old messages table, rebuilding...")
-                c.execute("DROP TABLE messages")
-                conn.commit()
-
-        # Messages 表（新版）
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT,
-            user TEXT,
-            role TEXT,
-            message TEXT,
-            timestamp TEXT,
-            latency REAL,
-            tokens_used INTEGER,
-            tokens_input INTEGER,
-            tokens_output INTEGER,
-            error_log TEXT,
-            error_code TEXT,
-            error_message TEXT,
-            is_success INTEGER
-        )
-        """)
-
-        # Sessions 表
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS sessions (
-            session_id TEXT PRIMARY KEY,
-            team_name TEXT,
-            topic TEXT,
-            mode TEXT,
-            created_at TEXT,
-            created_by TEXT
-        )
-        """)
-
-        # Participants 表
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS participants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT,
-            user_name TEXT,
-            joined_at TEXT,
-            last_active TEXT
-        )
-        """)
-
-        conn.commit()
-        conn.close()
-        print("✅ 数据库初始化成功")
-
+        with open(SESSIONS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"❌ 数据库初始化失败: {e}")
+        print(f"❌ Failed to save sessions: {e}")
 
+def load_all_participants():
+    """Load all participants from file"""
+    if Path(PARTICIPANTS_FILE).exists():
+        try:
+            with open(PARTICIPANTS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
 
-def save_message(
-    session_id,
-    user,
-    role,
-    message,
-    latency=0,
-    tokens_used=0,
-    tokens_input=0,
-    tokens_output=0,
-    error_log=None,
-    error_code=None,
-    error_message=None,
-    is_success=1
-):
-    """保存消息到数据库（支持 latency/tokens/error）"""
+def save_all_participants(data):
+    """Save all participants to file"""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-
-        if error_log is not None:
-            error_log = json.dumps(error_log, ensure_ascii=False)
-
-        c.execute("""
-            INSERT INTO messages 
-            (session_id, user, role, message, timestamp,
-             latency, tokens_used, tokens_input, tokens_output,
-             error_log, error_code, error_message, is_success)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            session_id, user, role, message, ts,
-            latency, tokens_used, tokens_input, tokens_output,
-            error_log, error_code, error_message, is_success
-        ))
-
-        conn.commit()
-        conn.close()
-        if DEBUG:
-            print(f"[DB] 保存消息: {session_id} - {user}")
+        with open(PARTICIPANTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"❌ 保存消息失败: {e}")
-
-
-def get_history(session_id, limit=100):
-    """获取会话历史（完整字段）"""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-
-        c.execute("""
-            SELECT session_id, user, role, message, timestamp,
-                   latency, tokens_used, tokens_input, tokens_output,
-                   error_log, error_code, error_message, is_success
-            FROM messages
-            WHERE session_id = ?
-            ORDER BY id ASC
-            LIMIT ?
-        """, (session_id, limit))
-
-        rows = c.fetchall()
-        conn.close()
-
-        return [
-            {
-                "session_id": r[0],
-                "user": r[1],
-                "role": r[2],
-                "message": r[3],
-                "timestamp": r[4],
-                "latency": r[5],
-                "tokens_used": r[6],
-                "tokens_input": r[7],
-                "tokens_output": r[8],
-                "error_log": r[9],
-                "error_code": r[10],
-                "error_message": r[11],
-                "is_success": r[12],
-            }
-            for r in rows
-        ]
-    except Exception as e:
-        print(f"❌ 获取历史失败: {e}")
-        return []
-
+        print(f"❌ Failed to save participants: {e}")
 
 def get_or_create_session(team_name, topic, mode, created_by):
-    """获取或创建会话"""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-
-        c.execute(
-            "SELECT session_id FROM sessions WHERE team_name = ? AND topic = ? AND mode = ?",
-            (team_name, topic, mode)
-        )
-        result = c.fetchone()
-
-        if result:
-            session_id = result[0]
-            if DEBUG:
-                print(f"[DB] 找到现有会话: {session_id}")
-        else:
-            topic_short = topic.replace('？', '').replace('?', '')[:20]
-            session_id = f"{team_name}_{topic_short}_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-            ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-
-            c.execute(
-                "INSERT INTO sessions (session_id, team_name, topic, mode, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)",
-                (session_id, team_name, topic, mode, ts, created_by)
-            )
-            conn.commit()
-            if DEBUG:
-                print(f"[DB] 创建新会话: {session_id}")
-
-        conn.close()
-        return session_id
-    except Exception as e:
-        print(f"❌ 会话操作失败: {e}")
-        return None
-
+    """Get or create session - include mode in session ID"""
+    all_sessions = load_all_sessions()
+    
+    team_name = team_name.strip()
+    topic = topic.strip()
+    mode = mode.strip()
+    
+    for sid, info in all_sessions.items():
+        existing_team = info.get("team_name", "").strip()
+        existing_topic = info.get("topic", "").strip()
+        existing_mode = info.get("mode", "").strip()
+        
+        if (existing_team == team_name and 
+            existing_topic == topic and 
+            existing_mode == mode):
+            print(f"✅ Found existing session: {sid}")
+            return sid
+    
+    topic_short = topic.replace('?', '').replace('？', '')[:20]
+    session_id = f"{team_name}_{topic_short}_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    all_sessions[session_id] = {
+        "team_name": team_name,
+        "topic": topic,
+        "mode": mode,
+        "created_at": datetime.now().isoformat(),
+        "created_by": created_by
+    }
+    
+    save_all_sessions(all_sessions)
+    return session_id
 
 def add_participant(session_id, user_name):
-    """添加或更新参与者"""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-
-        c.execute(
-            "SELECT id FROM participants WHERE session_id = ? AND user_name = ?",
-            (session_id, user_name)
-        )
-
-        if not c.fetchone():
-            c.execute(
-                "INSERT INTO participants (session_id, user_name, joined_at, last_active) VALUES (?, ?, ?, ?)",
-                (session_id, user_name, ts, ts)
-            )
-        else:
-            c.execute(
-                "UPDATE participants SET last_active = ? WHERE session_id = ? AND user_name = ?",
-                (ts, session_id, user_name)
-            )
-
-        conn.commit()
-        conn.close()
-        if DEBUG:
-            print(f"[DB] 参与者: {user_name}")
-    except Exception as e:
-        print(f"❌ 参与者操作失败: {e}")
-
+    """Add participant"""
+    all_participants = load_all_participants()
+    
+    if session_id not in all_participants:
+        all_participants[session_id] = {}
+    
+    all_participants[session_id][user_name] = datetime.now().isoformat()
+    save_all_participants(all_participants)
 
 def get_session_participants(session_id):
-    """获取会话的活跃参与者"""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-
-        cutoff_time = (datetime.now() - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
-
-        c.execute(
-            "SELECT user_name FROM participants WHERE session_id = ? AND last_active > ? ORDER BY joined_at ASC",
-            (session_id, cutoff_time)
-        )
-
-        participants = [row[0] for row in c.fetchall()]
-        conn.close()
-
-        if DEBUG:
-            print(f"[DB] 获取参与者: {session_id}")
-
-        return participants
-    except Exception as e:
-        print(f"❌ 获取参与者失败: {e}")
+    """Get active participants"""
+    all_participants = load_all_participants()
+    
+    if session_id not in all_participants:
         return []
+    
+    cutoff = datetime.now() - timedelta(minutes=5)
+    active = []
+    
+    for user, last_active in all_participants[session_id].items():
+        try:
+            if datetime.fromisoformat(last_active) > cutoff:
+                active.append(user)
+        except:
+            pass
+    
+    return active
 
+# ✅ 统一改成数据库版本
+def save_message(session_id, user, role, message):
+    return db.save_message(session_id, user, role, message)
+
+def get_history(session_id, limit=100):
+    return db.get_history(session_id, limit)
 
 def get_session_info(session_id):
-    """获取会话信息"""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
+    """Get session info"""
+    all_sessions = load_all_sessions()
+    
+    if session_id not in all_sessions:
+        return None
+    
+    info = all_sessions[session_id]
+    return {
+        "team_name": info.get("team_name"),
+        "topic": info.get("topic"),
+        "mode": info.get("mode"),
+        "created_at": info.get("created_at"),
+        "created_by": info.get("created_by")
+    }
 
-        c.execute(
-            "SELECT team_name, topic, mode, created_at, created_by FROM sessions WHERE session_id = ?",
-            (session_id,)
+# ========== CSS styling ==========
+st.markdown("""
+<style>
+    @keyframes blink {
+        0%, 49% { opacity: 1; }
+        50%, 100% { opacity: 0; }
+    }
+    
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateX(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+    
+    .main .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 1rem !important;
+    }
+    
+    .welcome-container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 40px;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        border-radius: 12px;
+    }
+    
+    .welcome-header {
+        text-align: center;
+        margin-bottom: 30px;
+    }
+    
+    .welcome-header h1 {
+        color: #1f77b4;
+        font-size: 2.5rem;
+        margin-bottom: 10px;
+    }
+    
+    .welcome-header p {
+        color: #666;
+        font-size: 1.1rem;
+    }
+    
+    .mode-card {
+        background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid #1976d2;
+        margin-bottom: 15px;
+    }
+    
+    .session-panel {
+        background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+        padding: 16px;
+        border-radius: 10px;
+        border-left: 4px solid #1f77b4;
+        margin-bottom: 16px;
+    }
+    
+    .session-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        font-size: 0.95rem;
+    }
+    
+    .timer {
+        font-weight: 700;
+        color: #ff6b6b;
+        font-size: 1.2rem;
+    }
+    
+    .ai-bubble {
+        background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+        padding: 12px 14px;
+        border-radius: 10px;
+        margin: 8px 0;
+        box-shadow: 0 1px 3px rgba(76, 175, 80, 0.15);
+        border-left: 3px solid #4caf50;
+        word-wrap: break-word;
+        animation: slideIn 0.3s ease-out;
+    }
+    
+    .student-bubble {
+        background: linear-gradient(135deg, #f5f5f5 0%, #eeeeee 100%);
+        padding: 12px 14px;
+        border-radius: 10px;
+        margin: 8px 0;
+        box-shadow: 0 1px 3px rgba(31, 119, 180, 0.1);
+        border-right: 3px solid #1f77b4;
+        margin-left: auto;
+        word-wrap: break-word;
+        animation: slideIn 0.3s ease-out;
+    }
+    
+    .bubble-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+    }
+    
+    .speaker-name {
+        font-weight: 700;
+        font-size: 0.85rem;
+        color: #333;
+    }
+    
+    .timestamp {
+        font-size: 0.7rem;
+        color: #999;
+    }
+    
+    .message-content {
+        font-size: 0.9rem;
+        line-height: 1.5;
+        color: #333;
+    }
+    
+    .ai-hint {
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+        padding: 10px;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        margin-bottom: 12px;
+        color: #856404;
+    }
+    
+    .team-info-card {
+        background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%);
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid #7b1fa2;
+        margin-bottom: 15px;
+    }
+    
+    .topic-card {
+        background: linear-gradient(135deg, #fff9e6 0%, #fff3cd 100%);
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 5px solid #ffc107;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    h1, h2, h3 {
+        color: #1f77b4;
+        margin-top: 0.5rem;
+        margin-bottom: 0.8rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ========== Session State ==========
+if "session_id" not in st.session_state:
+    st.session_state.session_id = None
+if "user_name" not in st.session_state:
+    st.session_state.user_name = None
+if "team_name" not in st.session_state:
+    st.session_state.team_name = None
+if "session_started" not in st.session_state:
+    st.session_state.session_started = False
+if "session_start_time" not in st.session_state:
+    st.session_state.session_start_time = None
+
+# Auto-refresh
+if st.session_state.session_started:
+    if "last_refresh" not in st.session_state:
+        st.session_state.last_refresh = datetime.now()
+    
+    if (datetime.now() - st.session_state.last_refresh).total_seconds() > 1.0:
+        st.session_state.last_refresh = datetime.now()
+        st.rerun()
+
+# ========== AI Mode Configuration ==========
+MODE_OPTIONS = {
+    "AI-Scaffolded": {
+        "name": "🎓 Socratic Tutoring",
+        "description": "AI will guide you to think deeply through questions",
+        "icon": "🎓"
+    },
+    "AI-Free-Debater": {
+        "name": "⚔️ Active Debater",
+        "description": "AI will present counterarguments and request evidence",
+        "icon": "⚔️"
+    },
+    "Control": {
+        "name": "👥 Human-Only Discussion",
+        "description": "No AI intervention, free discussion",
+        "icon": "👥"
+    }
+}
+
+def stream_ai_response(ai_reply, placeholder_container):
+    """Stream AI response"""
+    if not ai_reply:
+        placeholder_container.markdown("""
+        <div class="ai-bubble">
+            <div class="bubble-header">
+                <span class="speaker-name">🤖 AI Assistant</span>
+                <span class="timestamp">❌ Error</span>
+            </div>
+            <div class="message-content">AI service temporarily unavailable, please try again later</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
+    displayed_text = ""
+    
+    for char in ai_reply:
+        displayed_text += char
+        placeholder_container.markdown(f"""
+        <div class="ai-bubble">
+            <div class="bubble-header">
+                <span class="speaker-name">🤖 AI Assistant</span>
+                <span class="timestamp" style="color: #ff6b6b;">⏳</span>
+            </div>
+            <div class="message-content">{displayed_text}<span style="animation: blink 0.7s infinite;">▌</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+        time.sleep(0.02)
+    
+    placeholder_container.markdown(f"""
+    <div class="ai-bubble">
+        <div class="bubble-header">
+            <span class="speaker-name">🤖 AI Assistant</span>
+            <span class="timestamp">{datetime.now().strftime("%H:%M:%S")}</span>
+        </div>
+        <div class="message-content">{displayed_text}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ========== Login Page ==========
+if not st.session_state.session_started:
+    st.markdown("""
+    <div class="welcome-container">
+        <div class="welcome-header">
+            <h1>📱 Dialectical AI Partner</h1>
+            <p>Critical Thinking & Collaborative Learning Platform</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.divider()
+    
+    st.markdown("""
+    ## 🎓 Research Project Introduction
+    
+    This research explores how **generative AI as a dialectical partner** promotes students' critical thinking development.
+    
+    ### 📋 What You'll Experience:
+    - **Deep Discussion**: Discuss around self-defined topics
+    - **👥 Team Collaboration**: Multiple members join the same group to discuss together
+    - **🤖 AI Assistance**: Receive discussion support in different ways
+    - **📊 Real-time Analysis**: System automatically analyzes critical thinking indicators
+    
+    ### 💡 How to Join a Group
+    **Important:** Join the same discussion with other group members by filling in the **same "Group Name" and "Discussion Topic"**!
+    
+    **Example:**
+    - Group Name: `Group1`
+    - Discussion Topic: `Should AI be allowed to participate in K-12 education?`
+    
+    If two people fill in exactly the same information, they'll automatically sync to one interface!
+    """)
+    
+    st.divider()
+    
+    st.markdown("## 🎯 Discussion Setup")
+    
+    col1, col2 = st.columns([0.5, 0.5])
+    
+    with col1:
+        st.markdown("### 👤 Basic Information")
+        user_name = st.text_input(
+            "Your Name/Nickname",
+            placeholder="Enter your name",
+            max_chars=20,
+            key="login_username"
         )
+        
+        team_name = st.text_input(
+            "🏢 Group Name (Must be the same as group members!)",
+            placeholder="e.g.: Group1, Team A",
+            max_chars=30,
+            key="login_team"
+        )
+    
+    with col2:
+        st.markdown("### 🤖 AI Mode Selection")
+        mode_select = st.selectbox(
+            "Select AI Discussion Mode",
+            list(MODE_OPTIONS.keys()),
+            format_func=lambda x: MODE_OPTIONS[x]["name"],
+            key="login_mode"
+        )
+    
+    st.divider()
+    
+    st.markdown("### 📌 Discussion Topic")
+    st.info("💡 Enter the topic you want to discuss. **Group members must enter the same topic** to join the same discussion")
+    
+    topic = st.text_area(
+        "Discussion Topic",
+        placeholder="e.g.: Should companies adopt remote work policies?",
+        height=100,
+        key="login_topic"
+    )
+    
+    if mode_select:
+        mode_info = MODE_OPTIONS[mode_select]
+        st.markdown(f"""
+        <div class="mode-card">
+            <strong>{mode_info['name']}</strong><br><br>
+            {mode_info['description']}
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.divider()
+    
+    col1, col2, col3 = st.columns([0.3, 0.4, 0.3])
+    
+    with col2:
+        consent = st.checkbox("✅ I have read and agree to participate in this research")
+        
+        if st.button("🚀 Enter Discussion", use_container_width=True):
+            if not user_name.strip():
+                st.error("❌ Please enter your name")
+            elif not team_name.strip():
+                st.error("❌ Please enter group name")
+            elif not topic.strip():
+                st.error("❌ Please enter discussion topic")
+            elif not consent:
+                st.error("❌ Please agree to participate in this research")
+            else:
+                session_id = get_or_create_session(
+                    team_name=team_name.strip(),
+                    topic=topic.strip(),
+                    mode=mode_select,
+                    created_by=user_name.strip()
+                )
+                
+                add_participant(session_id, user_name.strip())
+                
+                st.session_state.session_id = session_id
+                st.session_state.user_name = user_name.strip()
+                st.session_state.team_name = team_name.strip()
+                st.session_state.session_started = True
+                st.session_state.session_start_time = datetime.now()
+                
+                st.success(f"✅ Successfully entered discussion!")
+                time.sleep(1)
+                st.rerun()
 
-        result = c.fetchone()
-        conn.close()
+# ========== Discussion Page ==========
+else:
+    session_info = get_session_info(st.session_state.session_id)
+    
+    if not session_info:
+        st.error("❌ Session information lost, please re-login")
+        if st.button("Return to Login"):
+            st.session_state.session_started = False
+            st.rerun()
+    else:
+        topic = session_info.get("topic", "Discussion Topic")
+        team_name = session_info.get("team_name", "Group")
+        mode = session_info.get("mode", "Control")
+        mode_info = MODE_OPTIONS.get(mode, {})
+        
+        add_participant(st.session_state.session_id, st.session_state.user_name)
+        current_participants = get_session_participants(st.session_state.session_id)
+        current_history = get_history(st.session_state.session_id, limit=500)
+        
+        # Sidebar
+        with st.sidebar:
+            st.title("📱 Dialectical AI")
+            
+            st.markdown("### 👥 Session Information")
+            st.markdown(f"""
+            <div class="team-info-card">
+                <strong>🏢 Group Name:</strong> {team_name}<br>
+                <strong>👤 Your Name:</strong> {st.session_state.user_name}<br>
+                <strong>🤖 AI Mode:</strong> {mode_info.get('name', 'Unknown')}<br>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.divider()
+           
+            st.markdown("### 📊 Session Status")
+            
+            elapsed = datetime.now() - st.session_state.session_start_time
+            remaining = max(0, 2400 - int(elapsed.total_seconds()))
+            minutes = remaining // 60
+            seconds = remaining % 60
+            
+            st.markdown(f"""
+            <div class="session-panel">
+                <div class="session-item">
+                    <span>💬 Messages:</span>
+                    <strong>{len(current_history)}</strong>
+                </div>
+                <div class="session-item">
+                    <span>👥 Group Members:</span>
+                    <strong>{len(current_participants)}</strong>
+                </div>
+                <div class="session-item">
+                    <span>⏱️ Time Remaining:</span>
+                    <span class="timer">{minutes:02d}:{seconds:02d}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.divider()
+            
+            st.markdown("**👥 Active Group Members**")
+            if current_participants:
+                for member in current_participants:
+                    if member == st.session_state.user_name:
+                        st.caption(f"✓ 🟢 {member} (you)")
+                    else:
+                        st.caption(f"● 🔵 {member}")
+            else:
+                st.caption("No active members")
+            
+            st.divider()
+            
+            st.markdown(f"""
+            <div class="topic-card">
+                <strong>📌 Discussion Topic:</strong><br><br>
+                {topic}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.divider()
+            
+            st.markdown(f"""
+            <div class="mode-card">
+                <strong>{mode_info.get('name', 'Unknown Mode')}</strong><br><br>
+                {mode_info.get('description', '')}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.divider()
+            
+            if st.button("📥 Export Discussion Record", use_container_width=True):
+                history = get_history(st.session_state.session_id, limit=1000)
+                if history:
+                    buffer = io.StringIO()
+                    writer = csv.writer(buffer)
+                    writer.writerow(["User", "Role", "Message", "Time"])
+                    for h in history:
+                        writer.writerow([h["user"], h["role"], h["message"], h["timestamp"]])
+                    st.download_button(
+                        "📥 Download CSV",
+                        buffer.getvalue(),
+                        f"discussion_record_{team_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        "text/csv"
+                    )
+        
+        # Main Area
+        st.markdown(f"## 💬 {team_name} Discussion")
+        
+        members_str = ", ".join(current_participants) if current_participants else "No members"
+        st.markdown(f"**👥 Participants:** {members_str}")
+        st.markdown(f"**📌 Topic:** {topic}")
+        
+        st.divider()
+        
+        if mode != "Control":
+            st.markdown("""
+            <div class="ai-hint">
+                💡 <strong>Tip:</strong> Use <code>@AI</code> in your message to mention AI for help.
+            </div>
+            """, unsafe_allow_html=True)
+        
+        progress = min(len(current_history) / 40, 1.0)
+        st.progress(progress, f"📊 {len(current_history)} messages")
+        
+        # Discussion History
+        st.markdown("### 💬 Discussion History")
+        
+        history = get_history(st.session_state.session_id, limit=500)
+        
+        if history:
+            for msg in history:
+                role = msg["role"]
+                user = msg["user"]
+                content = msg["message"]
+                timestamp = msg["timestamp"]
+                
+                try:
+                    time_obj = datetime.fromisoformat(timestamp)
+                    time_str = time_obj.strftime("%H:%M:%S")
+                except:
+                    time_str = ""
+                
+                if role == "assistant" or user == "AI":
+                    col1, col2 = st.columns([0.08, 0.92])
+                    with col2:
+                        st.markdown(f"""
+                        <div class="ai-bubble">
+                            <div class="bubble-header">
+                                <span class="speaker-name">🤖 AI Assistant</span>
+                                <span class="timestamp">{time_str}</span>
+                            </div>
+                            <div class="message-content">{content}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    col1, col2 = st.columns([0.92, 0.08])
+                    with col1:
+                        is_self = user == st.session_state.user_name
+                        has_ai_mention = "@AI" in content or "@ai" in content or "＠AI" in content
+                        
+                        bubble_html = f"""
+                        <div class="student-bubble" style="{'border: 2px solid #ff9800;' if has_ai_mention else ''}">
+                            <div class="bubble-header">
+                                <span class="speaker-name">👤 {user} {'(you)' if is_self else ''} {('🔔' if has_ai_mention else '')}</span>
+                                <span class="timestamp">{time_str}</span>
+                            </div>
+                            <div class="message-content">{content}</div>
+                        </div>
+                        """
+                        
+                        st.markdown(bubble_html, unsafe_allow_html=True)
+        else:
+            st.info("💭 Start discussing!")
+        
+        # Message Input
+        st.markdown("### ✏️ Your Message")
+        
+        col1, col2, col3 = st.columns([0.72, 0.14, 0.14])
+        
+        with col1:
+            user_input = st.text_area(
+                "",
+                placeholder="Share your thoughts... (use @AI to mention AI)",
+                height=80,
+                label_visibility="collapsed"
+            )
+        
+        with col2:
+            st.write("")
+            send_btn = st.button("📤 Send", use_container_width=True)
+        
+        with col3:
+            st.write("")
+            clear_btn = st.button("🗑️ Clear", use_container_width=True)
+        
+        # ========== Handle Send ==========
+        if send_btn:
+            if user_input.strip():
+                db.save_message(
+                    session_id=st.session_state.session_id,
+                    user=st.session_state.user_name,
+                    role="user",
+                    message=user_input,
+                    latency=0,
+                    tokens_used=0,
+                    tokens_input=0,
+                    tokens_output=0,
+                    is_success=1
+                )
 
-        if result:
-            info = {
-                "team_name": result[0],
-                "topic": result[1],
-                "mode": result[2],
-                "created_at": result[3],
-                "created_by": result[4]
-            }
-            if DEBUG:
-                print(f"[DB] 获取会话信息: {session_id}")
-            return info
-        return None
-    except Exception as e:
-        print(f"❌ 获取会话信息失败: {e}")
-        return None
+                add_participant(st.session_state.session_id, st.session_state.user_name)
 
+                ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
 
-def set_group_condition(group_id, condition):
-    """兼容函数"""
-    pass
+                if ai_triggered and mode != "Control":
+                    conversation_history = db.get_history(st.session_state.session_id, limit=20)
 
+                    with st.spinner("🤖 AI is thinking..."):
+                        try:
+                            result = generate_response(
+                                mode,
+                                user_input,
+                                group_id=st.session_state.session_id,
+                                user=st.session_state.user_name,
+                                conversation_history=conversation_history
+                            )
 
-def get_group_condition(group_id):
-    """兼容函数"""
-    pass
+                            if isinstance(result, tuple):
+                                ai_reply, metadata = result
+                                tokens_used = metadata.get('tokens_used', 0)
+                                tokens_input = metadata.get('tokens_input', 0)
+                                tokens_output = metadata.get('tokens_output', 0)
+                                latency = metadata.get('latency', 0)
+                            else:
+                                ai_reply = result
+                                tokens_used = 0
+                                tokens_input = 0
+                                tokens_output = 0
+                                latency = 0
+
+                            if ai_reply:
+                                db.save_message(
+                                    session_id=st.session_state.session_id,
+                                    user="AI",
+                                    role="assistant",
+                                    message=ai_reply,
+                                    latency=latency,
+                                    tokens_used=tokens_used,
+                                    tokens_input=tokens_input,
+                                    tokens_output=tokens_output,
+                                    is_success=1
+                                )
+
+                                ai_placeholder = st.empty()
+                                stream_ai_response(ai_reply, ai_placeholder)
+
+                                with st.expander("📊 API Performance Details"):
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("⏱️ Response Latency", f"{latency:.2f}s")
+                                    with col2:
+                                        st.metric("📊 Total Tokens", tokens_used)
+                                    with col3:
+                                        st.metric("Input | Output", f"{tokens_input} | {tokens_output}")
+
+                            else:
+                                st.error("❌ AI returned empty result")
+
+                        except Exception as e:
+                            st.error(f"❌ Error calling AI: {str(e)}")
+                            db.save_message(
+                                session_id=st.session_state.session_id,
+                                user="AI",
+                                role="assistant",
+                                message=f"[Exception: {str(e)}]",
+                                latency=0,
+                                tokens_used=0,
+                                tokens_input=0,
+                                tokens_output=0,
+                                error_code='EXCEPTION',
+                                error_message=str(e),
+                                is_success=0
+                            )
+
+                time.sleep(0.3)
+                st.rerun()
+
+        if clear_btn:
+            st.rerun()
+        
+        # ========== Consensus Matrix ==========
+        st.divider()
+        st.markdown("## 📊 Consensus Matrix (AI-Powered)")
+        
+        messages = db.get_history(st.session_state.session_id, limit=500)
+        participants = get_session_participants(st.session_state.session_id)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Messages", len(messages))
+        with col2:
+            st.metric("Participants", len(participants))
+        with col3:
+            user_msg_count = len([m for m in messages if m.get('user') != 'AI'])
+            st.metric("Discussions", user_msg_count)
+        with col4:
+            if st.button("🔄 Refresh", key="refresh_matrix"):
+                st.rerun()
+        
+        user_message_count = len([m for m in messages if m.get('user') != 'AI'])
+        
+        if user_message_count < 1:
+            st.info("⏳ Waiting for discussion...")
+        else:
+            try:
+                import pandas as pd
+                
+                matrix_calc = ConsensusMatrix()
+                
+                # AI 提取观点
+                with st.spinner("🤖 AI extracting viewpoints..."):
+                    viewpoints_pairs = matrix_calc.extract_and_simplify_viewpoints(
+                        messages,
+                        participants,
+                        llm_mode=mode,
+                        session_id=st.session_state.session_id
+                    )
+                
+                if viewpoints_pairs and len(viewpoints_pairs) > 0:
+                    simplified_vps = [vp[1] for vp in viewpoints_pairs]
+                    full_vps = [vp[0] for vp in viewpoints_pairs]
+                    
+                    # AI 分析态度
+                    with st.spinner("🤖 AI analyzing participant stances..."):
+                        stances_dict = matrix_calc.analyze_stances(
+                            messages,
+                            participants,
+                            viewpoints_pairs,
+                            llm_mode=mode,
+                            session_id=st.session_state.session_id
+                        )
+                    
+                    if stances_dict:
+                        # 构建矩阵数据
+                        matrix_data = {}
+                        for participant in participants:
+                            matrix_data[participant] = {}
+                            for i, full_vp in enumerate(full_vps):
+                                stance = stances_dict.get(participant, {}).get(simplified_vps[i], '△')
+                                matrix_data[participant][simplified_vps[i]] = stance
+                        
+                        df = pd.DataFrame.from_dict(matrix_data, orient='index')
+                        
+                        def style_cells(val):
+                            if val == "✅":
+                                return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
+                            elif val == "❌":
+                                return 'background-color: #FFB6C6; text-align: center; font-weight: bold; font-size: 18px;'
+                            else:
+                                return 'background-color: #FFE4B5; text-align: center; font-weight: bold; font-size: 16px;'
+                        
+                        try:
+                            styled_df = df.style.applymap(style_cells)
+                        except:
+                            styled_df = df.style.map(style_cells)
+                        
+                        st.dataframe(styled_df, use_container_width=True, height=300)
+                        
+                        # 图例
+                        st.markdown("---")
+                        st.markdown("### Legend:")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.markdown("✅ **Support / Agree**")
+                            st.caption("Based on participant's actual statements")
+                        with col2:
+                            st.markdown("❌ **Oppose / Disagree**")
+                            st.caption("Based on participant's actual statements")
+                        with col3:
+                            st.markdown("△ **Neutral / Not Mentioned**")
+                            st.caption("Not clearly expressed or not mentioned")
+                        
+                        # 显示完整观点
+                        with st.expander("📋 View Full Viewpoints"):
+                            for i, (full, simp) in enumerate(viewpoints_pairs, 1):
+                                st.markdown(f"**{i}. [{simp}]**")
+                                st.caption(full)
+                        
+                        # 导出
+                        st.markdown("---")
+                        if st.button("📥 Export as CSV"):
+                            csv_data = df.to_csv()
+                            st.download_button(
+                                label="Download CSV",
+                                data=csv_data,
+                                file_name="consensus_matrix.csv",
+                                mime="text/csv"
+                            )
+                    
+                    else:
+                        st.warning("⚠️ AI analysis failed. Please try again.")
+                
+                else:
+                    st.warning("⚠️ AI could not extract viewpoints. Need more discussion.")
+            
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
+
+        # ========== API Performance & Error Tracking ==========
+        st.markdown("---")
+        st.markdown("## 📊 API Performance & Error Tracking")
+
+        all_messages = db.get_history(st.session_state.session_id, limit=1000)
+
+        if all_messages:
+            import pandas as pd
+
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                successful = len([m for m in all_messages if m.get('is_success') == 1])
+                st.metric("Successful Calls", successful)
+            
+            with col2:
+                failed = len([m for m in all_messages if m.get('is_success') == 0])
+                st.metric("Failed Calls", failed)
+            
+            with col3:
+                total_tokens = sum([m.get('tokens_used', 0) for m in all_messages if m.get('tokens_used')])
+                st.metric("Total Tokens Used", total_tokens)
+            
+            with col4:
+                avg_latency = sum([m.get('latency', 0) for m in all_messages if m.get('latency')]) / max(len(all_messages), 1)
+                st.metric("Avg Latency", f"{avg_latency:.2f}s")
+            
+            # 错误分析
+            st.markdown("### Error Analysis")
+            
+            error_messages = [m for m in all_messages if m.get('error_code')]
+            
+            if error_messages:
+                error_df = pd.DataFrame([
+                    {
+                        'Error Code': m.get('error_code'),
+                        'Message': m.get('error_message'),
+                        'Timestamp': m.get('timestamp')
+                    }
+                    for m in error_messages
+                ])
+                
+                st.dataframe(error_df, use_container_width=True)
+            else:
+                st.info("No errors recorded")
+            
+            # Token 使用趋势
+            st.markdown("### Token Usage Trend")
+            
+            token_data = [
+                {
+                    'Time': m.get('timestamp'),
+                    'Tokens': m.get('tokens_used', 0),
+                    'Latency': m.get('latency', 0)
+                }
+                for m in all_messages
+                if m.get('tokens_used') and m.get('tokens_used') > 0
+            ]
+            
+            if token_data:
+                token_df = pd.DataFrame(token_data)
+                st.line_chart(token_df.set_index('Time')[['Tokens']])
