@@ -7,6 +7,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
+
+from db import DatabaseManager
+from api_wrapper import KimiAPIWrapper
 from ai_agent import generate_response, generate_argument_map
 
 # 尝试导入新模块，如果不存在则跳过
@@ -723,59 +726,144 @@ else:
             st.write("")
             clear_btn = st.button("🗑️ Clear", use_container_width=True)
         
-        # Handle Send
-        if send_btn:
-            if user_input.strip():
-                save_message(
-                    st.session_state.session_id, 
-                    st.session_state.user_name, 
-                    "user", 
-                    user_input
-                )
-                add_participant(st.session_state.session_id, st.session_state.user_name)
-                
-                ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
-                
-                if ai_triggered and mode != "Control":
-                    conversation_history = get_history(st.session_state.session_id, limit=20)
+# ========== Handle Send (改进版) ==========
+if send_btn:
+    if user_input.strip():
+        # ✅ 第 1 步：保存用户消息
+        user_message_id = db.save_message(
+            session_id=st.session_state.session_id,
+            user=st.session_state.user_name,
+            role="user",
+            content=user_input,
+            message_length=len(user_input),
+            char_count=len(user_input),
+            word_count=len(user_input.split()),
+            is_success=1,  # 用户消息总是成功的
+            latency=0,     # 用户消息没有延迟
+            tokens_used=0  # 用户消息不消耗 token
+        )
+        
+        add_participant(st.session_state.session_id, st.session_state.user_name)
+        
+        ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
+        
+        if ai_triggered and mode != "Control":
+            conversation_history = db.get_messages(st.session_state.session_id, limit=20)
+            
+            with st.spinner("🤖 AI is thinking..."):
+                try:
+                    print(f"\n[APP] Calling generate_response with mode={mode}", flush=True)
                     
-                    with st.spinner("🤖 AI is thinking..."):
-                        try:
-                            print(f"\n[APP] Calling generate_response with mode={mode}", flush=True)
-                            ai_reply = generate_response(
-                                mode,
-                                user_input,
-                                group_id=st.session_state.session_id,
-                                user=st.session_state.user_name,
-                                conversation_history=conversation_history
-                            )
-                            
-                            if ai_reply:
-                                save_message(
-                                    st.session_state.session_id, 
-                                    "AI", 
-                                    "assistant", 
-                                    ai_reply
-                                )
-                                
-                                ai_placeholder = st.empty()
-                                stream_ai_response(ai_reply, ai_placeholder)
-                            else:
-                                st.error("❌ AI returned empty result")
+                    # ✅ 第 2 步：记录请求开始时间
+                    api_start_time = time.time()
+                    
+                    # ✅ 改进：从 generate_response 获取元数据
+                    result = generate_response(
+                        mode,
+                        user_input,
+                        group_id=st.session_state.session_id,
+                        user=st.session_state.user_name,
+                        conversation_history=conversation_history
+                    )
+
+# ✅ 检查是否返回元数据
+if isinstance(result, tuple):
+    ai_reply, metadata = result
+    tokens_used = metadata.get('tokens_used', 0)
+    tokens_input = metadata.get('tokens_input', 0)
+    tokens_output = metadata.get('tokens_output', 0)
+else:
+    ai_reply = result
+    tokens_used = 0
+    tokens_input = 0
+    tokens_output = 0
+                    
+                    # ✅ 第 3 步：计算延迟
+                    latency = time.time() - api_start_time
+                    
+                    if ai_reply:
+    # ✅ 使用提取的真实 token 数
+    ai_message_id = db.save_message(
+        session_id=st.session_state.session_id,
+        user="AI",
+        role="assistant",
+        content=ai_reply,
+        message_length=len(ai_reply),
+        char_count=len(ai_reply),
+        word_count=len(ai_reply.split()),
+        latency=latency,
+        tokens_used=tokens_used,  # ✅ 真实数据
+        tokens_input=tokens_input,
+        tokens_output=tokens_output,
+        is_success=1,
+        error_code=None,
+        error_message=None,
+        error_log=None,
+        quality_score=0.9
+    )
+    
+    ai_placeholder = st.empty()
+    stream_ai_response(ai_reply, ai_placeholder)
+    
+    # ✅ 显示真实的性能信息
+    with st.expander("📊 API Performance Details"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("⏱️ Response Latency", f"{latency:.2f}s")
+        with col2:
+            st.metric("📊 Total Tokens", tokens_used)
+        with col3:
+            st.metric("Input | Output", f"{tokens_input} | {tokens_output}")
+                        # ✅ 第 5 步：显示性能信息
+                        with st.expander("📊 API Performance Details"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("⏱️ Response Latency", f"{latency:.2f}s")
+                            with col2:
+                                st.metric("📊 Tokens Used", "N/A")
+                    
+                    else:
+                        st.error("❌ AI returned empty result")
                         
-                        except Exception as e:
-                            st.error(f"❌ Error calling AI: {str(e)}")
-                            print(f"Error: {e}")
+                        # ✅ 保存失败记录
+                        failed_message_id = db.save_message(
+                            session_id=st.session_state.session_id,
+                            user="AI",
+                            role="assistant",
+                            content="[Empty Response]",
+                            latency=latency,
+                            error_code='EMPTY_RESPONSE',
+                            error_message='AI returned empty result',
+                            is_success=0
+                        )
                 
-                time.sleep(0.3)
-                st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error calling AI: {str(e)}")
+                    print(f"Error: {e}")
+                    
+                    # ✅ 保存异常
+                    exception_latency = time.time() - api_start_time
+                    db.save_message(
+                        session_id=st.session_state.session_id,
+                        user="AI",
+                        role="assistant",
+                        content=f"[Exception: {str(e)}]",
+                        latency=exception_latency,
+                        error_code='EXCEPTION',
+                        error_message=str(e),
+                        is_success=0
+                    )
         
-                if clear_btn:
-                    st.rerun()
+        st.session_state.force_refresh = True
+        time.sleep(0.3)
+        st.rerun()
+
+        if clear_btn:
+            st.rerun()
         
-        # ========== Analysis & Consensus Matrix ==========
+        # ========== Consensus Matrix ==========
         st.divider()
-        st.markdown("## 📊 Consensus Matrix")
+        st.markdown("## 📊 Consensus Matrix (AI-Powered)")
         
         all_data = load_all_sessions()
         current_sess = all_data.get(st.session_state.session_id, {})
@@ -805,8 +893,8 @@ else:
                 
                 matrix_calc = ConsensusMatrix()
                 
-                # 提取观点（带缓存）
-                with st.spinner("🔍 Extracting viewpoints..."):
+                # AI 提取观点
+                with st.spinner("🤖 AI extracting viewpoints..."):
                     viewpoints_pairs = matrix_calc.extract_and_simplify_viewpoints(
                         messages,
                         participants,
@@ -816,9 +904,10 @@ else:
                 
                 if viewpoints_pairs and len(viewpoints_pairs) > 0:
                     simplified_vps = [vp[1] for vp in viewpoints_pairs]
+                    full_vps = [vp[0] for vp in viewpoints_pairs]
                     
-                    # 分析态度（带缓存）
-                    with st.spinner("📊 Analyzing stances..."):
+                    # AI 分析态度
+                    with st.spinner("🤖 AI analyzing participant stances..."):
                         stances_dict = matrix_calc.analyze_stances(
                             messages,
                             participants,
@@ -828,10 +917,13 @@ else:
                         )
                     
                     if stances_dict:
-                        matrix_data = {
-                            p: {sv: stances_dict.get(p, {}).get(sv, '△') for sv in simplified_vps}
-                            for p in participants
-                        }
+                        # 构建矩阵数据
+                        matrix_data = {}
+                        for participant in participants:
+                            matrix_data[participant] = {}
+                            for i, full_vp in enumerate(full_vps):
+                                stance = stances_dict.get(participant, {}).get(simplified_vps[i], '△')
+                                matrix_data[participant][simplified_vps[i]] = stance
                         
                         df = pd.DataFrame.from_dict(matrix_data, orient='index')
                         
@@ -850,27 +942,108 @@ else:
                         
                         st.dataframe(styled_df, use_container_width=True, height=300)
                         
+                        # 图例
                         st.markdown("---")
                         st.markdown("### Legend:")
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            st.markdown("✅ **Support**")
-                            st.caption("Agrees with viewpoint")
+                            st.markdown("✅ **Support / Agree**")
+                            st.caption("Based on participant's actual statements")
                         with col2:
-                            st.markdown("❌ **Oppose**")
-                            st.caption("Disagrees")
+                            st.markdown("❌ **Oppose / Disagree**")
+                            st.caption("Based on participant's actual statements")
                         with col3:
-                            st.markdown("△ **Neutral**")
-                            st.caption("Not mentioned")
+                            st.markdown("△ **Neutral / Not Mentioned**")
+                            st.caption("Not clearly expressed or not mentioned")
                         
+                        # 显示完整观点
                         with st.expander("📋 View Full Viewpoints"):
                             for i, (full, simp) in enumerate(viewpoints_pairs, 1):
                                 st.markdown(f"**{i}. [{simp}]**")
                                 st.caption(full)
+                        
+                        # 导出
+                        st.markdown("---")
+                        if st.button("📥 Export as CSV"):
+                            csv = df.to_csv()
+                            st.download_button(
+                                label="Download CSV",
+                                data=csv,
+                                file_name="consensus_matrix.csv",
+                                mime="text/csv"
+                            )
+                    
                     else:
-                        st.warning("⚠️ Failed to analyze")
+                        st.warning("⚠️ AI analysis failed. Please try again.")
+                
                 else:
-                    st.warning("⚠️ Failed to extract viewpoints")
+                    st.warning("⚠️ AI could not extract viewpoints. Need more discussion.")
             
             except Exception as e:
                 st.error(f"❌ Error: {e}")
+
+                # 在 Consensus Matrix 后面添加
+st.markdown("---")
+st.markdown("## 📊 API Performance & Error Tracking")
+
+# 获取统计数据
+all_messages = db.get_messages(st.session_state.session_id, limit=1000)
+
+if all_messages:
+    # 过滤 AI 系统消息
+    api_calls = [m for m in all_messages if m.get('role') == 'system' and m.get('error_code')]
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        successful = len([m for m in all_messages if m.get('is_success') == 1])
+        st.metric("Successful Calls", successful)
+    
+    with col2:
+        failed = len([m for m in all_messages if m.get('is_success') == 0])
+        st.metric("Failed Calls", failed)
+    
+    with col3:
+        total_tokens = sum([m.get('tokens_used', 0) for m in all_messages if m.get('tokens_used')])
+        st.metric("Total Tokens Used", total_tokens)
+    
+    with col4:
+        avg_latency = sum([m.get('latency', 0) for m in all_messages if m.get('latency')]) / max(len(all_messages), 1)
+        st.metric("Avg Latency", f"{avg_latency:.2f}s")
+    
+    # 错误分析
+    st.markdown("### Error Analysis")
+    
+    error_messages = [m for m in all_messages if m.get('error_code')]
+    
+    if error_messages:
+        error_df = pd.DataFrame([
+            {
+                'Error Code': m.get('error_code'),
+                'Message': m.get('error_message'),
+                'Retries': m.get('retry_count'),
+                'Timestamp': m.get('timestamp')
+            }
+            for m in error_messages
+        ])
+        
+        st.dataframe(error_df, use_container_width=True)
+    else:
+        st.info("No errors recorded")
+    
+    # Token 使用趋势
+    st.markdown("### Token Usage Trend")
+    
+    token_data = [
+        {
+            'Time': m.get('timestamp'),
+            'Tokens': m.get('tokens_used', 0),
+            'Latency': m.get('latency', 0)
+        }
+        for m in all_messages
+        if m.get('tokens_used') and m.get('tokens_used') > 0
+    ]
+    
+    if token_data:
+        token_df = pd.DataFrame(token_data)
+        st.line_chart(token_df.set_index('Time')[['Tokens']])
