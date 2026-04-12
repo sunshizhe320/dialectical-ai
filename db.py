@@ -1,4 +1,4 @@
-# db.py - SQLite 数据库管理模块（升级版：支持 latency / tokens / error_log）
+# db.py - SQLite 数据库管理模块（升级版：支持迁移 + 完整字段）
 import sqlite3
 import time
 import json
@@ -9,12 +9,22 @@ DEBUG = False
 
 
 def init_db():
-    """初始化数据库"""
+    """初始化数据库（带迁移）"""
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        # Messages 表（升级版）
+        # ✅ 如果 messages 表存在但缺 session_id，就重建
+        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
+        if c.fetchone():
+            c.execute("PRAGMA table_info(messages)")
+            cols = [row[1] for row in c.fetchall()]
+            if "session_id" not in cols:
+                print("⚠️ Detected old messages table, rebuilding...")
+                c.execute("DROP TABLE messages")
+                conn.commit()
+
+        # Messages 表（新版）
         c.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,8 +33,6 @@ def init_db():
             role TEXT,
             message TEXT,
             timestamp TEXT,
-
-            -- ✅ 新增字段
             latency REAL,
             tokens_used INTEGER,
             tokens_input INTEGER,
@@ -87,7 +95,6 @@ def save_message(
         c = conn.cursor()
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
-        # error_log 转 JSON
         if error_log is not None:
             error_log = json.dumps(error_log, ensure_ascii=False)
 
@@ -105,7 +112,6 @@ def save_message(
 
         conn.commit()
         conn.close()
-
         if DEBUG:
             print(f"[DB] 保存消息: {session_id} - {user}")
     except Exception as e:
@@ -113,19 +119,42 @@ def save_message(
 
 
 def get_history(session_id, limit=100):
-    """获取会话的对话历史"""
+    """获取会话历史（完整字段）"""
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        c.execute(
-            "SELECT user, role, message, timestamp FROM messages WHERE session_id = ? ORDER BY id ASC LIMIT ?",
-            (session_id, limit)
-        )
+        c.execute("""
+            SELECT session_id, user, role, message, timestamp,
+                   latency, tokens_used, tokens_input, tokens_output,
+                   error_log, error_code, error_message, is_success
+            FROM messages
+            WHERE session_id = ?
+            ORDER BY id ASC
+            LIMIT ?
+        """, (session_id, limit))
+
         rows = c.fetchall()
         conn.close()
 
-        return [{"user": r[0], "role": r[1], "message": r[2], "timestamp": r[3]} for r in rows]
+        return [
+            {
+                "session_id": r[0],
+                "user": r[1],
+                "role": r[2],
+                "message": r[3],
+                "timestamp": r[4],
+                "latency": r[5],
+                "tokens_used": r[6],
+                "tokens_input": r[7],
+                "tokens_output": r[8],
+                "error_log": r[9],
+                "error_code": r[10],
+                "error_message": r[11],
+                "is_success": r[12],
+            }
+            for r in rows
+        ]
     except Exception as e:
         print(f"❌ 获取历史失败: {e}")
         return []
