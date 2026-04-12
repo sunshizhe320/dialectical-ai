@@ -8,9 +8,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-from db import DatabaseManager
+import db
 from api_wrapper import KimiAPIWrapper
 from ai_agent import generate_response, generate_argument_map
+db.init_db()
 
 # 尝试导入新模块，如果不存在则跳过
 try:
@@ -748,7 +749,7 @@ if send_btn:
         ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
 
         if ai_triggered and mode != "Control":
-            conversation_history = db.get_messages(st.session_state.session_id, limit=20)
+            conversation_history = db.get_history(st.session_state.session_id, limit=20)
 
             with st.spinner("🤖 AI is thinking..."):
                 try:
@@ -979,7 +980,7 @@ st.markdown("---")
 st.markdown("## 📊 API Performance & Error Tracking")
 
 # 获取统计数据
-all_messages = db.get_messages(st.session_state.session_id, limit=1000)
+all_messages = db.get_history(st.session_state.session_id, limit=1000)
 
 if all_messages:
     # 过滤 AI 系统消息
