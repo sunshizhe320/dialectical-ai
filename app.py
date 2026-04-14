@@ -136,6 +136,11 @@ def get_session_info(session_id):
         "created_by": info.get("created_by")
     }
 
+# ========== 过滤共识矩阵分析消息 ==========
+def is_analysis_msg(m):
+    content = (m.get("message") or "").strip()
+    return content.startswith("[Viewpoint Extraction]") or content.startswith("[Stance Analysis")
+
 # ========== CSS styling ==========
 st.markdown("""
 <style>
@@ -318,7 +323,8 @@ else:
 
         add_participant(st.session_state.session_id, st.session_state.user_name)
         current_participants = get_session_participants(st.session_state.session_id)
-        current_history = db.get_history(st.session_state.session_id, limit=500)
+        raw_history = db.get_history(st.session_state.session_id, limit=500)
+        current_history = [m for m in raw_history if not is_analysis_msg(m)]
 
         # Sidebar
         with st.sidebar:
@@ -376,6 +382,7 @@ else:
             st.divider()
             if st.button("📥 Export Discussion Record", use_container_width=True):
                 history = db.get_history(st.session_state.session_id, limit=1000)
+                history = [m for m in history if not is_analysis_msg(m)]
                 if history:
                     buffer = io.StringIO()
                     writer = csv.writer(buffer)
@@ -405,6 +412,7 @@ else:
         # Discussion History
         st.markdown("### 💬 Discussion History")
         history = db.get_history(st.session_state.session_id, limit=500)
+        history = [m for m in history if not is_analysis_msg(m)]
         if history:
             for msg in history:
                 role = msg["role"]
@@ -579,7 +587,8 @@ else:
         st.divider()
         st.markdown("## 📊 Consensus Matrix (AI-Powered)")
 
-        messages = db.get_history(st.session_state.session_id, limit=1000)
+        raw_messages = db.get_history(st.session_state.session_id, limit=1000)
+        messages = [m for m in raw_messages if not is_analysis_msg(m)]
         participants = get_session_participants(st.session_state.session_id)
 
         col1, col2, col3, col4 = st.columns(4)
@@ -591,98 +600,101 @@ else:
             user_msg_count = len([m for m in messages if m.get('user') != 'AI'])
             st.metric("Discussions", user_msg_count)
         with col4:
-            if st.button("🔄 Refresh", key="refresh_matrix"):
-                st.rerun()
+            run_matrix = st.button("🔍 Run Matrix", key="run_matrix")
 
         user_message_count = len([m for m in messages if m.get('user') != 'AI'])
 
-        if user_message_count < 1:
-            st.info("⏳ Waiting for discussion...")
+        if not run_matrix:
+            st.info("点击「Run Matrix」才会运行分析，避免无限刷新。")
         else:
-            try:
-                import pandas as pd
-                matrix_calc = ConsensusMatrix()
+            if user_message_count < 1:
+                st.info("⏳ Waiting for discussion...")
+            else:
+                try:
+                    import pandas as pd
+                    matrix_calc = ConsensusMatrix()
 
-                with st.spinner("🤖 AI extracting viewpoints..."):
-                    viewpoints_pairs = matrix_calc.extract_and_simplify_viewpoints(
-                        messages,
-                        participants,
-                        llm_mode=mode,
-                        session_id=st.session_state.session_id
-                    )
-
-                if viewpoints_pairs and len(viewpoints_pairs) > 0:
-                    simplified_vps = [vp[1] for vp in viewpoints_pairs]
-                    full_vps = [vp[0] for vp in viewpoints_pairs]
-
-                    with st.spinner("🤖 AI analyzing participant stances..."):
-                        stances_dict = matrix_calc.analyze_stances(
+                    with st.spinner("🤖 AI extracting viewpoints..."):
+                        viewpoints_pairs = matrix_calc.extract_and_simplify_viewpoints(
                             messages,
                             participants,
-                            viewpoints_pairs,
                             llm_mode=mode,
                             session_id=st.session_state.session_id
                         )
 
-                    if stances_dict:
-                        matrix_data = {}
-                        for participant in participants:
-                            matrix_data[participant] = {}
-                            for i, full_vp in enumerate(full_vps):
-                                stance = stances_dict.get(participant, {}).get(simplified_vps[i], '△')
-                                matrix_data[participant][simplified_vps[i]] = stance
+                    if viewpoints_pairs and len(viewpoints_pairs) > 0:
+                        simplified_vps = [vp[1] for vp in viewpoints_pairs]
+                        full_vps = [vp[0] for vp in viewpoints_pairs]
 
-                        df = pd.DataFrame.from_dict(matrix_data, orient='index')
+                        with st.spinner("🤖 AI analyzing participant stances..."):
+                            stances_dict = matrix_calc.analyze_stances(
+                                messages,
+                                participants,
+                                viewpoints_pairs,
+                                llm_mode=mode,
+                                session_id=st.session_state.session_id
+                            )
 
-                        def style_cells(val):
-                            if val == "✅":
-                                return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
-                            elif val == "❌":
-                                return 'background-color: #FFB6C6; text-align: center; font-weight: bold; font-size: 18px;'
-                            else:
-                                return 'background-color: #FFE4B5; text-align: center; font-weight: bold; font-size: 16px;'
+                        if stances_dict:
+                            matrix_data = {}
+                            for participant in participants:
+                                matrix_data[participant] = {}
+                                for i, full_vp in enumerate(full_vps):
+                                    stance = stances_dict.get(participant, {}).get(simplified_vps[i], '△')
+                                    matrix_data[participant][simplified_vps[i]] = stance
 
-                        try:
-                            styled_df = df.style.applymap(style_cells)
-                        except:
-                            styled_df = df.style.map(style_cells)
+                            df = pd.DataFrame.from_dict(matrix_data, orient='index')
 
-                        st.dataframe(styled_df, use_container_width=True, height=300)
+                            def style_cells(val):
+                                if val == "✅":
+                                    return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
+                                elif val == "❌":
+                                    return 'background-color: #FFB6C6; text-align: center; font-weight: bold; font-size: 18px;'
+                                else:
+                                    return 'background-color: #FFE4B5; text-align: center; font-weight: bold; font-size: 16px;'
 
-                        st.markdown("---")
-                        st.markdown("### Legend:")
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.markdown("✅ **Support / Agree**")
-                            st.caption("Based on participant's actual statements")
-                        with col2:
-                            st.markdown("❌ **Oppose / Disagree**")
-                            st.caption("Based on participant's actual statements")
-                        with col3:
-                            st.markdown("△ **Neutral / Not Mentioned**")
-                            st.caption("Not clearly expressed or not mentioned")
+                            try:
+                                styled_df = df.style.applymap(style_cells)
+                            except:
+                                styled_df = df.style.map(style_cells)
 
-                        with st.expander("📋 View Full Viewpoints"):
-                            for i, (full, simp) in enumerate(viewpoints_pairs, 1):
-                                st.markdown(f"**{i}. [{simp}]**")
-                                st.caption(full)
+                            st.dataframe(styled_df, use_container_width=True, height=300)
 
-                        st.markdown("---")
-                        if st.button("📥 Export as CSV"):
-                            csv_data = df.to_csv()
-                            st.download_button(label="Download CSV", data=csv_data, file_name="consensus_matrix.csv", mime="text/csv")
+                            st.markdown("---")
+                            st.markdown("### Legend:")
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.markdown("✅ **Support / Agree**")
+                                st.caption("Based on participant's actual statements")
+                            with col2:
+                                st.markdown("❌ **Oppose / Disagree**")
+                                st.caption("Based on participant's actual statements")
+                            with col3:
+                                st.markdown("△ **Neutral / Not Mentioned**")
+                                st.caption("Not clearly expressed or not mentioned")
+
+                            with st.expander("📋 View Full Viewpoints"):
+                                for i, (full, simp) in enumerate(viewpoints_pairs, 1):
+                                    st.markdown(f"**{i}. [{simp}]**")
+                                    st.caption(full)
+
+                            st.markdown("---")
+                            if st.button("📥 Export as CSV"):
+                                csv_data = df.to_csv()
+                                st.download_button(label="Download CSV", data=csv_data, file_name="consensus_matrix.csv", mime="text/csv")
+                        else:
+                            st.warning("⚠️ AI analysis failed. Please try again.")
                     else:
-                        st.warning("⚠️ AI analysis failed. Please try again.")
-                else:
-                    st.warning("⚠️ AI could not extract viewpoints. Need more discussion.")
-            except Exception as e:
-                st.error(f"❌ Error: {e}")
+                        st.warning("⚠️ AI could not extract viewpoints. Need more discussion.")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
 
         # ========== API Performance & Error Tracking ==========
         st.markdown("---")
         st.markdown("## 📊 API Performance & Error Tracking")
 
         all_messages = db.get_history(st.session_state.session_id, limit=1000)
+        all_messages = [m for m in all_messages if not is_analysis_msg(m)]
         if all_messages:
             col1, col2, col3, col4 = st.columns(4)
 
