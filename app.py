@@ -1,8 +1,5 @@
 import streamlit as st
 from datetime import datetime, timedelta
-st.write("DEBUG app file:", __file__)
-st.write("DEBUG app loaded at:", datetime.now())
-st.write("DEBUG git check:", "v2-send-fix")
 import time
 import io
 import csv
@@ -35,7 +32,6 @@ SESSIONS_FILE = "sessions_data.json"
 PARTICIPANTS_FILE = "participants_data.json"
 
 def load_all_sessions():
-    """Load all sessions from file"""
     if Path(SESSIONS_FILE).exists():
         try:
             with open(SESSIONS_FILE, 'r', encoding='utf-8') as f:
@@ -45,7 +41,6 @@ def load_all_sessions():
     return {}
 
 def save_all_sessions(data):
-    """Save all sessions to file"""
     try:
         with open(SESSIONS_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -53,7 +48,6 @@ def save_all_sessions(data):
         print(f"❌ Failed to save sessions: {e}")
 
 def load_all_participants():
-    """Load all participants from file"""
     if Path(PARTICIPANTS_FILE).exists():
         try:
             with open(PARTICIPANTS_FILE, 'r', encoding='utf-8') as f:
@@ -63,7 +57,6 @@ def load_all_participants():
     return {}
 
 def save_all_participants(data):
-    """Save all participants to file"""
     try:
         with open(PARTICIPANTS_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -71,7 +64,6 @@ def save_all_participants(data):
         print(f"❌ Failed to save participants: {e}")
 
 def get_or_create_session(team_name, topic, mode, created_by):
-    """Get or create session - include mode in session ID"""
     all_sessions = load_all_sessions()
     team_name = team_name.strip()
     topic = topic.strip()
@@ -98,7 +90,6 @@ def get_or_create_session(team_name, topic, mode, created_by):
     return session_id
 
 def add_participant(session_id, user_name):
-    """Add participant"""
     all_participants = load_all_participants()
     if session_id not in all_participants:
         all_participants[session_id] = {}
@@ -106,7 +97,6 @@ def add_participant(session_id, user_name):
     save_all_participants(all_participants)
 
 def get_session_participants(session_id):
-    """Get active participants"""
     all_participants = load_all_participants()
     if session_id not in all_participants:
         return []
@@ -121,7 +111,6 @@ def get_session_participants(session_id):
     return active
 
 def save_message(session_id, user, role, message):
-    """Save message (legacy file storage)"""
     all_sessions = load_all_sessions()
     if session_id not in all_sessions:
         return
@@ -134,7 +123,6 @@ def save_message(session_id, user, role, message):
     save_all_sessions(all_sessions)
 
 def get_history(session_id, limit=100):
-    """Get conversation history"""
     all_sessions = load_all_sessions()
     if session_id not in all_sessions:
         return []
@@ -142,7 +130,6 @@ def get_history(session_id, limit=100):
     return messages[-limit:] if len(messages) > limit else messages
 
 def get_session_info(session_id):
-    """Get session info"""
     all_sessions = load_all_sessions()
     if session_id not in all_sessions:
         return None
@@ -195,8 +182,6 @@ if "session_start_time" not in st.session_state:
     st.session_state.session_start_time = None
 if "sending" not in st.session_state:
     st.session_state.sending = False
-if "send_clicked" not in st.session_state:
-    st.session_state.send_clicked = False
 if "last_action" not in st.session_state:
     st.session_state.last_action = datetime.now()
 if "user_input" not in st.session_state:
@@ -210,7 +195,6 @@ MODE_OPTIONS = {
 }
 
 def stream_ai_response(ai_reply, placeholder_container):
-    """Stream AI response"""
     if not ai_reply:
         placeholder_container.markdown("""
         <div class="ai-bubble">
@@ -468,216 +452,121 @@ else:
         else:
             st.info("💭 Start discussing!")
 
-# Message Input (NO form, reliable click)
-st.markdown("### ✏️ Your Message")
+        # Message Input (only in discussion page)
+        st.markdown("### ✏️ Your Message")
 
-col1, col2, col3 = st.columns([0.72, 0.14, 0.14])
-with col1:
-    user_input = st.text_area(
-        "",
-        placeholder="Share your thoughts... (use @AI to mention AI)",
-        height=80,
-        label_visibility="collapsed",
-        key="user_input"
-    )
-with col2:
-    st.write("")
-    send_btn = st.button("📤 Send", use_container_width=True, key="send_btn")
-with col3:
-    st.write("")
-    clear_btn = st.button("🗑️ Clear", use_container_width=True, key="clear_btn")
+        col1, col2, col3 = st.columns([0.72, 0.14, 0.14])
+        with col1:
+            user_input = st.text_area(
+                "",
+                placeholder="Share your thoughts... (use @AI to mention AI)",
+                height=80,
+                label_visibility="collapsed",
+                key="user_input"
+            )
+        with col2:
+            st.write("")
+            send_btn = st.button("📤 Send", use_container_width=True, key="send_btn")
+        with col3:
+            st.write("")
+            clear_btn = st.button("🗑️ Clear", use_container_width=True, key="clear_btn")
 
-# ========== Handle Send ==========
-if send_btn:
-    st.session_state.last_action = datetime.now()
-    if user_input.strip():
-        st.session_state.sending = True
+        if send_btn:
+            st.session_state.last_action = datetime.now()
+            if user_input.strip():
+                st.session_state.sending = True
 
-        db.save_message(
-            session_id=st.session_state.session_id,
-            user=st.session_state.user_name,
-            role="user",
-            message=user_input,
-            latency=0,
-            tokens_used=0,
-            tokens_input=0,
-            tokens_output=0,
-            is_success=1
-        )
+                db.save_message(
+                    session_id=st.session_state.session_id,
+                    user=st.session_state.user_name,
+                    role="user",
+                    message=user_input,
+                    latency=0,
+                    tokens_used=0,
+                    tokens_input=0,
+                    tokens_output=0,
+                    is_success=1
+                )
 
-        add_participant(st.session_state.session_id, st.session_state.user_name)
-        ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
+                add_participant(st.session_state.session_id, st.session_state.user_name)
+                ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
 
-        if ai_triggered and mode != "Control":
-            conversation_history = db.get_history(st.session_state.session_id, limit=20)
-            with st.spinner("🤖 AI is thinking..."):
-                try:
-                    result = generate_response(
-                        mode,
-                        user_input,
-                        group_id=st.session_state.session_id,
-                        user=st.session_state.user_name,
-                        conversation_history=conversation_history
-                    )
+                if ai_triggered and mode != "Control":
+                    conversation_history = db.get_history(st.session_state.session_id, limit=20)
+                    with st.spinner("🤖 AI is thinking..."):
+                        try:
+                            result = generate_response(
+                                mode,
+                                user_input,
+                                group_id=st.session_state.session_id,
+                                user=st.session_state.user_name,
+                                conversation_history=conversation_history
+                            )
 
-                    if isinstance(result, tuple):
-                        ai_reply, metadata = result
-                        tokens_used = metadata.get('tokens_used', 0)
-                        tokens_input = metadata.get('tokens_input', 0)
-                        tokens_output = metadata.get('tokens_output', 0)
-                        latency = metadata.get('latency', 0)
-                    else:
-                        ai_reply = result
-                        tokens_used = 0
-                        tokens_input = 0
-                        tokens_output = 0
-                        latency = 0
+                            if isinstance(result, tuple):
+                                ai_reply, metadata = result
+                                tokens_used = metadata.get('tokens_used', 0)
+                                tokens_input = metadata.get('tokens_input', 0)
+                                tokens_output = metadata.get('tokens_output', 0)
+                                latency = metadata.get('latency', 0)
+                            else:
+                                ai_reply = result
+                                tokens_used = 0
+                                tokens_input = 0
+                                tokens_output = 0
+                                latency = 0
 
-                    if ai_reply:
-                        db.save_message(
-                            session_id=st.session_state.session_id,
-                            user="AI",
-                            role="assistant",
-                            message=ai_reply,
-                            latency=latency,
-                            tokens_used=tokens_used,
-                            tokens_input=tokens_input,
-                            tokens_output=tokens_output,
-                            is_success=1
-                        )
+                            if ai_reply:
+                                db.save_message(
+                                    session_id=st.session_state.session_id,
+                                    user="AI",
+                                    role="assistant",
+                                    message=ai_reply,
+                                    latency=latency,
+                                    tokens_used=tokens_used,
+                                    tokens_input=tokens_input,
+                                    tokens_output=tokens_output,
+                                    is_success=1
+                                )
 
-                        ai_placeholder = st.empty()
-                        stream_ai_response(ai_reply, ai_placeholder)
+                                ai_placeholder = st.empty()
+                                stream_ai_response(ai_reply, ai_placeholder)
 
-                        with st.expander("📊 API Performance Details"):
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("⏱️ Response Latency", f"{latency:.2f}s")
-                            with col2:
-                                st.metric("📊 Total Tokens", tokens_used)
-                            with col3:
-                                st.metric("Input | Output", f"{tokens_input} | {tokens_output}")
-                    else:
-                        st.error("❌ AI returned empty result")
-                except Exception as e:
-                    st.error(f"❌ Error calling AI: {str(e)}")
-                    db.save_message(
-                        session_id=st.session_state.session_id,
-                        user="AI",
-                        role="assistant",
-                        message=f"[Exception: {str(e)}]",
-                        latency=0,
-                        tokens_used=0,
-                        tokens_input=0,
-                        tokens_output=0,
-                        error_code='EXCEPTION',
-                        error_message=str(e),
-                        is_success=0
-                    )
+                                with st.expander("📊 API Performance Details"):
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("⏱️ Response Latency", f"{latency:.2f}s")
+                                    with col2:
+                                        st.metric("📊 Total Tokens", tokens_used)
+                                    with col3:
+                                        st.metric("Input | Output", f"{tokens_input} | {tokens_output}")
+                            else:
+                                st.error("❌ AI returned empty result")
+                        except Exception as e:
+                            st.error(f"❌ Error calling AI: {str(e)}")
+                            db.save_message(
+                                session_id=st.session_state.session_id,
+                                user="AI",
+                                role="assistant",
+                                message=f"[Exception: {str(e)}]",
+                                latency=0,
+                                tokens_used=0,
+                                tokens_input=0,
+                                tokens_output=0,
+                                error_code='EXCEPTION',
+                                error_message=str(e),
+                                is_success=0
+                            )
 
-        st.session_state.sending = False
-        time.sleep(0.3)
-        st.rerun()
+                st.session_state.sending = False
+                time.sleep(0.3)
+                st.rerun()
 
-if clear_btn:
-    st.session_state.last_action = datetime.now()
-    st.session_state.user_input = ""
-    st.rerun()
-# ========== Handle Send ==========
-if st.session_state.send_clicked:
-    st.session_state.send_clicked = False
+        if clear_btn:
+            st.session_state.last_action = datetime.now()
+            st.session_state.user_input = ""
+            st.rerun()
 
-    if user_input.strip():
-        st.session_state.sending = True
-
-        db.save_message(
-            session_id=st.session_state.session_id,
-            user=st.session_state.user_name,
-            role="user",
-            message=user_input,
-            latency=0,
-            tokens_used=0,
-            tokens_input=0,
-            tokens_output=0,
-            is_success=1
-        )
-
-        add_participant(st.session_state.session_id, st.session_state.user_name)
-        ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
-
-        if ai_triggered and mode != "Control":
-            conversation_history = db.get_history(st.session_state.session_id, limit=20)
-
-            with st.spinner("🤖 AI is thinking..."):
-                try:
-                    result = generate_response(
-                        mode,
-                        user_input,
-                        group_id=st.session_state.session_id,
-                        user=st.session_state.user_name,
-                        conversation_history=conversation_history
-                    )
-
-                    if isinstance(result, tuple):
-                        ai_reply, metadata = result
-                        tokens_used = metadata.get('tokens_used', 0)
-                        tokens_input = metadata.get('tokens_input', 0)
-                        tokens_output = metadata.get('tokens_output', 0)
-                        latency = metadata.get('latency', 0)
-                    else:
-                        ai_reply = result
-                        tokens_used = 0
-                        tokens_input = 0
-                        tokens_output = 0
-                        latency = 0
-
-                    if ai_reply:
-                        db.save_message(
-                            session_id=st.session_state.session_id,
-                            user="AI",
-                            role="assistant",
-                            message=ai_reply,
-                            latency=latency,
-                            tokens_used=tokens_used,
-                            tokens_input=tokens_input,
-                            tokens_output=tokens_output,
-                            is_success=1
-                        )
-
-                        ai_placeholder = st.empty()
-                        stream_ai_response(ai_reply, ai_placeholder)
-
-                        with st.expander("📊 API Performance Details"):
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("⏱️ Response Latency", f"{latency:.2f}s")
-                            with col2:
-                                st.metric("📊 Total Tokens", tokens_used)
-                            with col3:
-                                st.metric("Input | Output", f"{tokens_input} | {tokens_output}")
-
-                    else:
-                        st.error("❌ AI returned empty result")
-
-                except Exception as e:
-                    st.error(f"❌ Error calling AI: {str(e)}")
-                    db.save_message(
-                        session_id=st.session_state.session_id,
-                        user="AI",
-                        role="assistant",
-                        message=f"[Exception: {str(e)}]",
-                        latency=0,
-                        tokens_used=0,
-                        tokens_input=0,
-                        tokens_output=0,
-                        error_code='EXCEPTION',
-                        error_message=str(e),
-                        is_success=0
-                    )
-
-        st.session_state.sending = False
-        time.sleep(0.3)
-        st.rerun()
         # ========== Consensus Matrix ==========
         st.divider()
         st.markdown("## 📊 Consensus Matrix (AI-Powered)")
@@ -706,8 +595,6 @@ if st.session_state.send_clicked:
         else:
             try:
                 import pandas as pd
-                from consensus_matrix import ConsensusMatrix
-
                 matrix_calc = ConsensusMatrix()
 
                 with st.spinner("🤖 AI extracting viewpoints..."):
@@ -816,7 +703,6 @@ if st.session_state.session_started:
     if "last_action" not in st.session_state:
         st.session_state.last_action = datetime.now()
 
-    # 3 秒内有操作就不刷新
     if (datetime.now() - st.session_state.last_action).total_seconds() >= 3:
         if not st.session_state.get("sending", False):
             if (datetime.now() - st.session_state.last_refresh).total_seconds() > 3.0:
