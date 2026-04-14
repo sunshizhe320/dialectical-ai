@@ -186,6 +186,14 @@ if "last_action" not in st.session_state:
 if "user_input" not in st.session_state:
     st.session_state.user_input = ""
 
+# ====== Matrix State ======
+if "matrix_last_msg_count" not in st.session_state:
+    st.session_state.matrix_last_msg_count = 0
+if "matrix_cache" not in st.session_state:
+    st.session_state.matrix_cache = None
+if "matrix_running" not in st.session_state:
+    st.session_state.matrix_running = False
+
 # ========== AI Mode Configuration ==========
 MODE_OPTIONS = {
     "AI-Scaffolded": {"name": "🎓 Socratic Tutoring", "description": "AI will guide you to think deeply through questions", "icon": "🎓"},
@@ -574,6 +582,9 @@ else:
                                 is_success=0
                             )
 
+                # ✅ 每次发送后触发矩阵刷新
+                st.session_state.matrix_last_msg_count = 0
+
                 st.session_state.sending = False
                 time.sleep(0.3)
                 st.rerun()
@@ -600,94 +611,96 @@ else:
             user_msg_count = len([m for m in messages if m.get('user') != 'AI'])
             st.metric("Discussions", user_msg_count)
         with col4:
-            run_matrix = st.button("🔍 Run Matrix", key="run_matrix")
+            if st.button("🔄 Refresh"):
+                st.session_state.matrix_last_msg_count = 0
 
-        user_message_count = len([m for m in messages if m.get('user') != 'AI'])
+        should_run_matrix = (len(messages) > 0 and len(messages) != st.session_state.matrix_last_msg_count)
 
-        if not run_matrix:
-            st.info("点击「Run Matrix」才会运行分析，避免无限刷新。")
-        else:
-            if user_message_count < 1:
-                st.info("⏳ Waiting for discussion...")
-            else:
-                try:
-                    import pandas as pd
-                    matrix_calc = ConsensusMatrix()
+        if should_run_matrix and not st.session_state.matrix_running:
+            st.session_state.matrix_running = True
+            try:
+                import pandas as pd
+                matrix_calc = ConsensusMatrix()
 
-                    with st.spinner("🤖 AI extracting viewpoints..."):
-                        viewpoints_pairs = matrix_calc.extract_and_simplify_viewpoints(
+                with st.spinner("🤖 AI extracting viewpoints..."):
+                    viewpoints_pairs = matrix_calc.extract_and_simplify_viewpoints(
+                        messages,
+                        participants,
+                        llm_mode=mode,
+                        session_id=st.session_state.session_id
+                    )
+
+                if viewpoints_pairs and len(viewpoints_pairs) > 0:
+                    simplified_vps = [vp[1] for vp in viewpoints_pairs]
+                    full_vps = [vp[0] for vp in viewpoints_pairs]
+
+                    with st.spinner("🤖 AI analyzing participant stances..."):
+                        stances_dict = matrix_calc.analyze_stances(
                             messages,
                             participants,
+                            viewpoints_pairs,
                             llm_mode=mode,
                             session_id=st.session_state.session_id
                         )
 
-                    if viewpoints_pairs and len(viewpoints_pairs) > 0:
-                        simplified_vps = [vp[1] for vp in viewpoints_pairs]
-                        full_vps = [vp[0] for vp in viewpoints_pairs]
+                    if stances_dict:
+                        matrix_data = {}
+                        for participant in participants:
+                            matrix_data[participant] = {}
+                            for i, full_vp in enumerate(full_vps):
+                                stance = stances_dict.get(participant, {}).get(simplified_vps[i], '△')
+                                matrix_data[participant][simplified_vps[i]] = stance
 
-                        with st.spinner("🤖 AI analyzing participant stances..."):
-                            stances_dict = matrix_calc.analyze_stances(
-                                messages,
-                                participants,
-                                viewpoints_pairs,
-                                llm_mode=mode,
-                                session_id=st.session_state.session_id
-                            )
+                        df = pd.DataFrame.from_dict(matrix_data, orient='index')
 
-                        if stances_dict:
-                            matrix_data = {}
-                            for participant in participants:
-                                matrix_data[participant] = {}
-                                for i, full_vp in enumerate(full_vps):
-                                    stance = stances_dict.get(participant, {}).get(simplified_vps[i], '△')
-                                    matrix_data[participant][simplified_vps[i]] = stance
+                        def style_cells(val):
+                            if val == "✅":
+                                return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
+                            elif val == "❌":
+                                return 'background-color: #FFB6C6; text-align: center; font-weight: bold; font-size: 18px;'
+                            else:
+                                return 'background-color: #FFE4B5; text-align: center; font-weight: bold; font-size: 16px;'
 
-                            df = pd.DataFrame.from_dict(matrix_data, orient='index')
+                        try:
+                            styled_df = df.style.applymap(style_cells)
+                        except:
+                            styled_df = df.style.map(style_cells)
 
-                            def style_cells(val):
-                                if val == "✅":
-                                    return 'background-color: #90EE90; text-align: center; font-weight: bold; font-size: 18px;'
-                                elif val == "❌":
-                                    return 'background-color: #FFB6C6; text-align: center; font-weight: bold; font-size: 18px;'
-                                else:
-                                    return 'background-color: #FFE4B5; text-align: center; font-weight: bold; font-size: 16px;'
+                        st.session_state.matrix_cache = {
+                            "df": df,
+                            "styled": styled_df,
+                            "viewpoints": viewpoints_pairs
+                        }
 
-                            try:
-                                styled_df = df.style.applymap(style_cells)
-                            except:
-                                styled_df = df.style.map(style_cells)
+                st.session_state.matrix_last_msg_count = len(messages)
 
-                            st.dataframe(styled_df, use_container_width=True, height=300)
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
+            finally:
+                st.session_state.matrix_running = False
 
-                            st.markdown("---")
-                            st.markdown("### Legend:")
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.markdown("✅ **Support / Agree**")
-                                st.caption("Based on participant's actual statements")
-                            with col2:
-                                st.markdown("❌ **Oppose / Disagree**")
-                                st.caption("Based on participant's actual statements")
-                            with col3:
-                                st.markdown("△ **Neutral / Not Mentioned**")
-                                st.caption("Not clearly expressed or not mentioned")
+        if st.session_state.matrix_cache:
+            styled_df = st.session_state.matrix_cache["styled"]
+            viewpoints_pairs = st.session_state.matrix_cache["viewpoints"]
 
-                            with st.expander("📋 View Full Viewpoints"):
-                                for i, (full, simp) in enumerate(viewpoints_pairs, 1):
-                                    st.markdown(f"**{i}. [{simp}]**")
-                                    st.caption(full)
+            st.dataframe(styled_df, use_container_width=True, height=300)
 
-                            st.markdown("---")
-                            if st.button("📥 Export as CSV"):
-                                csv_data = df.to_csv()
-                                st.download_button(label="Download CSV", data=csv_data, file_name="consensus_matrix.csv", mime="text/csv")
-                        else:
-                            st.warning("⚠️ AI analysis failed. Please try again.")
-                    else:
-                        st.warning("⚠️ AI could not extract viewpoints. Need more discussion.")
-                except Exception as e:
-                    st.error(f"❌ Error: {e}")
+            st.markdown("---")
+            st.markdown("### Legend:")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("✅ **Support / Agree**")
+            with col2:
+                st.markdown("❌ **Oppose / Disagree**")
+            with col3:
+                st.markdown("△ **Neutral / Not Mentioned**")
+
+            with st.expander("📋 View Full Viewpoints"):
+                for i, (full, simp) in enumerate(viewpoints_pairs, 1):
+                    st.markdown(f"**{i}. [{simp}]**")
+                    st.caption(full)
+        else:
+            st.info("⏳ Waiting for discussion...")
 
         # ========== API Performance & Error Tracking ==========
         st.markdown("---")
