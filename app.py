@@ -110,6 +110,7 @@ def get_session_participants(session_id):
             pass
     return active
 
+# 仍保留文件消息写入（可选）
 def save_message(session_id, user, role, message):
     all_sessions = load_all_sessions()
     if session_id not in all_sessions:
@@ -121,13 +122,6 @@ def save_message(session_id, user, role, message):
         "timestamp": datetime.now().isoformat()
     })
     save_all_sessions(all_sessions)
-
-def get_history(session_id, limit=100):
-    all_sessions = load_all_sessions()
-    if session_id not in all_sessions:
-        return []
-    messages = all_sessions[session_id].get("messages", [])
-    return messages[-limit:] if len(messages) > limit else messages
 
 def get_session_info(session_id):
     all_sessions = load_all_sessions()
@@ -324,7 +318,7 @@ else:
 
         add_participant(st.session_state.session_id, st.session_state.user_name)
         current_participants = get_session_participants(st.session_state.session_id)
-        current_history = get_history(st.session_state.session_id, limit=500)
+        current_history = db.get_history(st.session_state.session_id, limit=500)
 
         # Sidebar
         with st.sidebar:
@@ -381,7 +375,7 @@ else:
 
             st.divider()
             if st.button("📥 Export Discussion Record", use_container_width=True):
-                history = get_history(st.session_state.session_id, limit=1000)
+                history = db.get_history(st.session_state.session_id, limit=1000)
                 if history:
                     buffer = io.StringIO()
                     writer = csv.writer(buffer)
@@ -410,7 +404,7 @@ else:
 
         # Discussion History
         st.markdown("### 💬 Discussion History")
-        history = get_history(st.session_state.session_id, limit=500)
+        history = db.get_history(st.session_state.session_id, limit=500)
         if history:
             for msg in history:
                 role = msg["role"]
@@ -487,6 +481,13 @@ else:
                     tokens_output=0,
                     is_success=1
                 )
+                # 同步到文件（可选）
+                save_message(
+                    session_id=st.session_state.session_id,
+                    user=st.session_state.user_name,
+                    role="user",
+                    message=user_input
+                )
 
                 add_participant(st.session_state.session_id, st.session_state.user_name)
                 ai_triggered = "@AI" in user_input or "@ai" in user_input or "＠AI" in user_input
@@ -527,6 +528,13 @@ else:
                                     tokens_input=tokens_input,
                                     tokens_output=tokens_output,
                                     is_success=1
+                                )
+                                # 同步到文件（可选）
+                                save_message(
+                                    session_id=st.session_state.session_id,
+                                    user="AI",
+                                    role="assistant",
+                                    message=ai_reply
                                 )
 
                                 ai_placeholder = st.empty()
@@ -571,9 +579,7 @@ else:
         st.divider()
         st.markdown("## 📊 Consensus Matrix (AI-Powered)")
 
-        all_data = load_all_sessions()
-        current_sess = all_data.get(st.session_state.session_id, {})
-        messages = current_sess.get("messages", [])
+        messages = db.get_history(st.session_state.session_id, limit=1000)
         participants = get_session_participants(st.session_state.session_id)
 
         col1, col2, col3, col4 = st.columns(4)
